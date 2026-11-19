@@ -1,0 +1,30 @@
+{
+  "predictor": {
+    "samples": 460596,
+    "test_samples": 46059,
+    "mae_plane_x_m": 0.06311152875423431,
+    "mae_plane_height_m": 0.04352738335728645,
+    "mae_plane_time_s": 0.012561297044157982,
+    "mae_bounce_x_m": 0.06042000651359558,
+    "mae_bounce_y_m": 0.05836111679673195,
+    "mae_bounce_time_s": 0.0067632729187607765,
+    "reach_accuracy": 0.9986756117154085,
+    "bounce_count_accuracy": 0.9945990272593598,
+    "epochs": 40
+  },
+  "selector": {
+    "situations": 30000,
+    "test_situations": 3000,
+    "top1_agreement_with_best_shot": 0.6496666666666666,
+    "expected_win_rate_network": 0.7055172324180603,
+    "expected_win_rate_best_possible": 0.7247216701507568,
+    "expected_win_rate_random_shot": 0.5012882351875305,
+    "expected_win_rate_always_drive_centre": 0.571488618850708,
+    "shot_mix": {
+      "drive": 0.67,
+      "soft": 0.33,
+      "lob": 0.0
+    },
+    "epochs": 60
+  }
+}
