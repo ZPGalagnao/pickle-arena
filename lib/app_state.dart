@@ -15,6 +15,9 @@ class GameSettings {
   bool haptics;
   bool leftHanded; // joystick on the right, buttons on the left
   bool showAiThoughts;
+  bool moveAssist; // slide toward the ball when the joystick is idle
+  bool sound;
+  bool music;
 
   GameSettings({
     this.control = ControlMode.joystick,
@@ -24,6 +27,9 @@ class GameSettings {
     this.haptics = true,
     this.leftHanded = false,
     this.showAiThoughts = false,
+    this.moveAssist = true,
+    this.sound = true,
+    this.music = true,
   });
 
   Map<String, dynamic> toJson() => {
@@ -34,6 +40,9 @@ class GameSettings {
         'haptics': haptics,
         'leftHanded': leftHanded,
         'showAiThoughts': showAiThoughts,
+        'moveAssist': moveAssist,
+        'sound': sound,
+        'music': music,
       };
 
   factory GameSettings.fromJson(Map<String, dynamic> j) => GameSettings(
@@ -44,6 +53,9 @@ class GameSettings {
         haptics: j['haptics'] as bool? ?? true,
         leftHanded: j['leftHanded'] as bool? ?? false,
         showAiThoughts: j['showAiThoughts'] as bool? ?? false,
+        moveAssist: j['moveAssist'] as bool? ?? true,
+        sound: j['sound'] as bool? ?? true,
+        music: j['music'] as bool? ?? true,
       );
 }
 
@@ -99,6 +111,14 @@ class AppState extends ChangeNotifier {
   Future<void> saveSettings() async {
     notifyListeners();
     await _prefs.setString('settings', jsonEncode(settings.toJson()));
+  }
+
+  /// Adds match XP to the profile. Returns (oldLevel, newLevel).
+  Future<(int, int)> addXp(int amount) async {
+    final before = profile.level;
+    profile.xp += amount;
+    await saveProfile(profile);
+    return (before, profile.level);
   }
 
   Future<void> recordResult(String key, bool won) async {

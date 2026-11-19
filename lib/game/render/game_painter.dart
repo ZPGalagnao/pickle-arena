@@ -23,6 +23,8 @@ class GameScene {
   double time = 0;
   double topInset;
   double bottomInset;
+  double sideInset;
+  double victoryTime = 0; // seconds since game over (camera push-in)
 
   GameScene({
     required this.state,
@@ -32,8 +34,9 @@ class GameScene {
     required this.fx,
     this.localIndex = 0,
     this.showMarker = true,
-    this.topInset = 96,
-    this.bottomInset = 150,
+    this.topInset = 46,
+    this.bottomInset = 6,
+    this.sideInset = 6,
   });
 }
 
@@ -47,31 +50,34 @@ class GamePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final v = scene.view;
     final s = scene.state;
-    v.layout(size, top: scene.topInset, bottom: scene.bottomInset);
+    v.layout(size, top: scene.topInset, bottom: scene.bottomInset, side: scene.sideInset);
+    _updateCamera(s);
     canvas.save();
-    canvas.translate(scene.fx.shakeOffset().dx, scene.fx.shakeOffset().dy);
-    CourtPainter.paintBackground(canvas, size, v, scene.time);
+    final sh = scene.fx.shakeOffset();
+    canvas.translate(sh.dx, sh.dy);
+    CourtPainter.paintBackground(canvas, size, v, scene.time, excitement: scene.fx.excitement);
     CourtPainter.paintCourt(canvas, v);
 
     final li = scene.localIndex;
-    if (li >= 0) _paintHints(canvas, v, s, li);
+    if (li >= 0 && s.phase != Phase.gameOver) _paintHints(canvas, v, s, li);
     scene.fx.paintGround(canvas, v);
 
-    // shadows
+    // ball shadow (the phantom ball hides its shadow too)
     final b = s.ball;
+    final ghost = _ballAlpha(s);
     final shadowC = v.project(b.x, b.y, 0);
     final sppm = v.pxPerMeter(b.x, b.y, 0);
     final sr = ballRadius * sppm * (1.1 + math.min(b.z, 3) * 0.12);
     canvas.drawOval(Rect.fromCenter(center: shadowC, width: sr * 2.2, height: sr * 1.2),
-        Paint()..color = Color.fromRGBO(0, 0, 0, (0.45 - b.z * 0.08).clamp(0.12, 0.45)));
+        Paint()..color = Color.fromRGBO(0, 0, 0, (0.45 - b.z * 0.08).clamp(0.12, 0.45) * ghost));
 
     // painter's algorithm: far objects first, net in the middle
     final items = <(double, void Function())>[];
-    for (var i = 0; i < 2; i++) {
+    for (var i = 0; i < s.players.length; i++) {
       final p = s.players[i];
       items.add((v.depthKey(p.y), () => _paintPlayer(canvas, v, i)));
     }
-    items.add((v.depthKey(b.y) - 0.01, () => _paintBall(canvas, v)));
+    items.add((v.depthKey(b.y) - 0.01, () => _paintBall(canvas, v, ghost)));
     items.sort((a, b2) => b2.$1.compareTo(a.$1));
     var netDrawn = false;
     for (final it in items) {
@@ -84,17 +90,46 @@ class GamePainter extends CustomPainter {
     if (!netDrawn) CourtPainter.paintNet(canvas, v);
     scene.fx.paintParticles(canvas, v);
     canvas.restore();
-    scene.fx.paintScreen(canvas, size);
+    scene.fx.paintScreen(canvas, size, slowmo: s.phase == Phase.gameOver ? 0 : s.slowmo);
+  }
+
+  /// Victory: push the camera in on the winning team.
+  void _updateCamera(GameState s) {
+    final v = scene.view;
+    if (s.phase == Phase.gameOver && s.winner >= 0) {
+      final winners = s.teamPlayers(s.winner);
+      var fx = 0.0, fy = 0.0;
+      for (final p in winners) {
+        fx += p.x;
+        fy += p.y;
+      }
+      final k = Curves.easeInOut.transform((scene.victoryTime / 1.6).clamp(0.0, 1.0));
+      // frame the celebrating winners, with the sad losers still in view
+      v.focusX = fx / winners.length * 0.7;
+      v.focusY = fy / winners.length * 0.55;
+      v.focusZ = 1.2;
+      v.zoom = 1 + 0.55 * k;
+    } else {
+      v.zoom = 1;
+    }
+  }
+
+  /// PHANTOM DROP fades the ball out over the net.
+  double _ballAlpha(GameState s) {
+    if (s.ball.fx != BallFx.phantom || s.phase != Phase.rally || s.ball.fxBounces > 0) return 1;
+    final hitter = s.lastHitter < 0 ? null : s.players[s.lastHitter];
+    if (hitter == null) return 1;
+    final travelled = (s.ball.y * hitter.side).clamp(-8.0, 0.0); // 0 at the net, negative on hitter side
+    final pastNet = s.ball.y * hitter.side < 0;
+    if (pastNet) return 0.12;
+    return (0.12 + 0.88 * (-travelled / 4).clamp(0.0, 1.0));
   }
 
   void _paintHints(Canvas canvas, CourtView v, GameState s, int li) {
     final me = s.players[li];
-    final incoming = s.phase == Phase.rally && s.lastHitter >= 0 && s.lastHitter != li;
+    final incoming = s.phase == Phase.rally && s.lastHitter >= 0 && s.hittingTeam != me.team;
     // kitchen warning: standing in the kitchen while a volley is coming
-    if (incoming &&
-        me.y.abs() < Court.kitchen &&
-        s.bouncesOnReceiver == 0 &&
-        !s.mustBounce) {
+    if (incoming && me.y.abs() < Court.kitchen && s.bouncesOnReceiver == 0 && !s.mustBounce) {
       final y0 = me.side * Court.kitchen;
       final a = v.project(-Court.halfW, 0, 0), bb = v.project(Court.halfW, 0, 0);
       final c = v.project(Court.halfW, y0, 0), d = v.project(-Court.halfW, y0, 0);
@@ -144,6 +179,9 @@ class GamePainter extends CustomPainter {
     final feet = v.project(p.x, p.y, 0);
     final ppm = v.pxPerMeter(p.x, p.y, 0);
     final backView = v.depthKey(p.y) < 0; // near half: we see their back
+    var pose = 0;
+    if (s.phase == Phase.gameOver && s.winner >= 0) pose = p.team == s.winner ? 1 : 2;
+    final skillColor = Color(prof.special.color);
     CharacterPainter.paint(
       canvas,
       feet,
@@ -158,13 +196,18 @@ class GamePainter extends CustomPainter {
       moveSpeed: math.sqrt(p.vx * p.vx + p.vy * p.vy),
       backView: backView,
       time: scene.time + i * 1.7,
+      pose: pose,
+      aura: pose == 0 && (p.specialArmed || p.meter >= 1) ? skillColor : null,
+      auraStrength: p.specialArmed ? 1.0 : 0.45,
+      frozen: p.frozen > 0 && pose == 0,
     );
-    // name tag
+    if (pose != 0) return; // no name tags during the victory scene
+    // name tag + special meter
     final tp = TextPainter(
       text: TextSpan(
         text: prof.name,
         style: TextStyle(
-          color: Colors.white,
+          color: i == scene.localIndex ? const Color(0xFFD4F33A) : Colors.white,
           fontFamily: 'Roboto',
           fontSize: math.max(9.0, ppm * 0.3),
           fontWeight: FontWeight.w800,
@@ -173,16 +216,30 @@ class GamePainter extends CustomPainter {
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    final tagY = feet.dy - ppm * CharacterPainter.visualScale * 2.42 - tp.height;
+    final hop = pose == 1 ? math.sin((scene.time + i * 1.7) * 7).abs() * 0.32 * ppm * CharacterPainter.visualScale : 0;
+    final tagY = feet.dy - hop - ppm * CharacterPainter.visualScale * 2.42 - tp.height - 5;
     tp.paint(canvas, Offset(feet.dx - tp.width / 2, tagY));
+    if (pose == 0) {
+      final w = math.max(26.0, ppm * 0.9), h = math.max(3.0, ppm * 0.07);
+      final bar = Rect.fromLTWH(feet.dx - w / 2, tagY + tp.height + 1, w, h);
+      canvas.drawRRect(RRect.fromRectAndRadius(bar, Radius.circular(h)), Paint()..color = const Color(0x99000000));
+      final ready = p.meter >= 1;
+      final fill = Rect.fromLTWH(bar.left, bar.top, w * p.meter.clamp(0.0, 1.0), h);
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(fill, Radius.circular(h)),
+          Paint()
+            ..color = ready
+                ? Color.lerp(skillColor, Colors.white, 0.4 + 0.4 * math.sin(scene.time * 10))!
+                : skillColor.withValues(alpha: 0.85));
+    }
   }
 
-  void _paintBall(Canvas canvas, CourtView v) {
+  void _paintBall(Canvas canvas, CourtView v, double alpha) {
     final b = scene.state.ball;
-    scene.fx.paintTrail(canvas, v, ballRadius);
+    scene.fx.paintTrail(canvas, v, ballRadius, b.fx);
     final c = v.project(b.x, b.y, b.z + ballRadius * 0.5);
     final r = math.max(3.0, ballRadius * v.pxPerMeter(b.x, b.y, b.z));
-    Effects.paintBall(canvas, c, r);
+    Effects.paintBall(canvas, c, r, fx: b.fx, alpha: alpha);
   }
 
   @override

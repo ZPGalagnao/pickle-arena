@@ -29,9 +29,18 @@ class Court {
       x.abs() <= halfW && y * side >= 0 && y.abs() <= halfL;
 }
 
+/// Special-attack effect carried by the ball (0 = normal ball).
+class BallFx {
+  static const none = 0, fire = 1, ice = 2, thunder = 3, phantom = 4, tornado = 5;
+}
+
 class Ball {
   double x, y, z, vx, vy, vz;
   bool rolling;
+  int fx; // BallFx
+  double curve; // sideways acceleration (m/s^2), used by THUNDER CURVE
+  double kick; // sideways kick applied on the first bounce (TORNADO)
+  int fxBounces;
 
   Ball({
     this.x = 0,
@@ -41,10 +50,15 @@ class Ball {
     this.vy = 0,
     this.vz = 0,
     this.rolling = false,
+    this.fx = BallFx.none,
+    this.curve = 0,
+    this.kick = 0,
+    this.fxBounces = 0,
   });
 
-  Ball copy() =>
-      Ball(x: x, y: y, z: z, vx: vx, vy: vy, vz: vz, rolling: rolling);
+  Ball copy() => Ball(
+      x: x, y: y, z: z, vx: vx, vy: vy, vz: vz, rolling: rolling,
+      fx: fx, curve: curve, kick: kick, fxBounces: fxBounces);
 
   void setFrom(Ball o) {
     x = o.x;
@@ -54,6 +68,17 @@ class Ball {
     vy = o.vy;
     vz = o.vz;
     rolling = o.rolling;
+    fx = o.fx;
+    curve = o.curve;
+    kick = o.kick;
+    fxBounces = o.fxBounces;
+  }
+
+  void clearFx() {
+    fx = BallFx.none;
+    curve = 0;
+    kick = 0;
+    fxBounces = 0;
   }
 
   double get speed => math.sqrt(vx * vx + vy * vy + vz * vz);
@@ -109,13 +134,26 @@ class BallPhysics {
     b.z = 0;
     b.vx *= Phys.friction;
     b.vy *= Phys.friction;
-    b.vz = -b.vz * Phys.restitution;
+    var rest = Phys.restitution;
+    if (b.fx == BallFx.phantom) rest = 0.42; // skids low
+    if (b.fx == BallFx.tornado && b.fxBounces == 0) {
+      rest = 0.95; // jumps up ...
+      b.vx += b.kick; // ... and kicks sideways
+    }
+    b.vz = -b.vz * rest;
+    b.curve = 0;
+    b.fxBounces++;
   }
 
   /// Advance the ball by [dt] seconds, resolving bounces and net hits
   /// exactly. Returns the events that happened during the step.
   static List<BallEvent> step(Ball b, double dt, {bool netActive = true}) {
     final events = <BallEvent>[];
+    if (b.curve != 0 && !b.rolling) {
+      // THUNDER CURVE: extra sideways acceleration while in the air
+      b.vx += b.curve * dt;
+      b.x += 0.5 * b.curve * dt * dt;
+    }
     var rem = dt;
     var guard = 0;
     while (rem > 1e-9 && guard++ < 8) {

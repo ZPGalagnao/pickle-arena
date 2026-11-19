@@ -1,5 +1,6 @@
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../app_state.dart';
 import '../models/profile.dart';
@@ -27,7 +28,7 @@ class _CustomizeScreenState extends State<CustomizeScreen> with SingleTickerProv
     super.initState();
     _p = AppScope.read(context).profile.copy();
     _name = TextEditingController(text: _p.name);
-    _tabs = TabController(length: 4, vsync: this);
+    _tabs = TabController(length: 5, vsync: this);
   }
 
   @override
@@ -44,7 +45,7 @@ class _CustomizeScreenState extends State<CustomizeScreen> with SingleTickerProv
     try {
       final pick = await FaceService.pick(src);
       if (pick == null || !mounted) return;
-      final face = await Navigator.of(context).push<dynamic>(
+      final face = await Navigator.of(context).push<Uint8List>(
         MaterialPageRoute(builder: (_) => FaceCropScreen(pick: pick)),
       );
       if (face != null && mounted) setState(() => _p.face = face);
@@ -57,6 +58,33 @@ class _CustomizeScreenState extends State<CustomizeScreen> with SingleTickerProv
     }
   }
 
+  Future<void> _editNumber() async {
+    final ctrl = TextEditingController(text: '${_p.look.number}');
+    final result = await showDialog<int>(
+      context: context,
+      builder: (c) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: const Text('Jersey number'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(2)],
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w900),
+          decoration: const InputDecoration(hintText: '0 - 99'),
+          onSubmitted: (v) => Navigator.pop(c, int.tryParse(v)),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c), child: const Text('CANCEL')),
+          FilledButton(onPressed: () => Navigator.pop(c, int.tryParse(ctrl.text)), child: const Text('OK')),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (result != null) _edit(() => _p.look.number = result.clamp(0, 99));
+  }
+
   Future<void> _save() async {
     final name = _name.text.trim();
     _p.name = name.isEmpty ? 'Player' : (name.length > 14 ? name.substring(0, 14) : name);
@@ -67,44 +95,37 @@ class _CustomizeScreenState extends State<CustomizeScreen> with SingleTickerProv
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.firstRun ? 'CREATE YOUR PLAYER' : 'MY PLAYER'),
-        automaticallyImplyLeading: !widget.firstRun,
-      ),
-      extendBodyBehindAppBar: false,
       body: AppBackground(
         child: SafeArea(
-          top: false,
-          child: Column(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _header(),
-              TabBar(
-                controller: _tabs,
-                indicatorColor: AppColors.lime,
-                labelColor: AppColors.lime,
-                unselectedLabelColor: AppColors.muted,
-                labelStyle: const TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.2),
-                dividerColor: Colors.transparent,
-                tabs: const [
-                  Tab(icon: Icon(Icons.face_rounded), text: 'FACE'),
-                  Tab(icon: Icon(Icons.checkroom_rounded), text: 'STYLE'),
-                  Tab(icon: Icon(Icons.sports_tennis_rounded), text: 'GEAR'),
-                  Tab(icon: Icon(Icons.bolt_rounded), text: 'STATS'),
-                ],
-              ),
+              SizedBox(width: 290, child: _leftPanel()),
               Expanded(
-                child: TabBarView(
-                  controller: _tabs,
-                  children: [_faceTab(), _styleTab(), _gearTab(), _statsTab()],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                child: BigButton(
-                  label: widget.firstRun ? "LET'S PLAY" : 'SAVE PLAYER',
-                  icon: Icons.check_circle_rounded,
-                  colors: const [AppColors.lime, Color(0xFF9CFF57)],
-                  onTap: _save,
+                child: Column(
+                  children: [
+                    TabBar(
+                      controller: _tabs,
+                      indicatorColor: AppColors.lime,
+                      labelColor: AppColors.lime,
+                      unselectedLabelColor: AppColors.muted,
+                      labelStyle: const TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.1, fontSize: 12),
+                      dividerColor: Colors.transparent,
+                      tabs: const [
+                        Tab(icon: Icon(Icons.face_rounded, size: 20), text: 'FACE', height: 52),
+                        Tab(icon: Icon(Icons.checkroom_rounded, size: 20), text: 'STYLE', height: 52),
+                        Tab(icon: Icon(Icons.sports_tennis_rounded, size: 20), text: 'GEAR', height: 52),
+                        Tab(icon: Icon(Icons.auto_awesome_rounded, size: 20), text: 'SPECIAL', height: 52),
+                        Tab(icon: Icon(Icons.bolt_rounded, size: 20), text: 'STATS', height: 52),
+                      ],
+                    ),
+                    Expanded(
+                      child: TabBarView(
+                        controller: _tabs,
+                        children: [_faceTab(), _styleTab(), _gearTab(), _specialTab(), _statsTab()],
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -114,65 +135,87 @@ class _CustomizeScreenState extends State<CustomizeScreen> with SingleTickerProv
     );
   }
 
-  Widget _header() {
-    return SizedBox(
-      height: 230,
-      child: Row(
+  Widget _leftPanel() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          Row(
+            children: [
+              if (!widget.firstRun)
+                IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.arrow_back_rounded)),
+              Expanded(
+                child: Text(widget.firstRun ? 'CREATE YOUR PLAYER' : 'MY PLAYER',
+                    style: const TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.4)),
+              ),
+            ],
+          ),
           Expanded(
-            flex: 5,
             child: Stack(
               alignment: Alignment.bottomCenter,
               children: [
                 Container(
-                  height: 40,
-                  margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 6),
+                  height: 34,
+                  margin: const EdgeInsets.symmetric(horizontal: 30, vertical: 4),
                   decoration: BoxDecoration(
                     gradient: const RadialGradient(colors: [Color(0xFF3B87D3), Color(0x002B6CB5)]),
                     borderRadius: BorderRadius.circular(100),
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: CharacterPreview(profile: _p, height: 210),
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: CharacterPreview(profile: _p, height: 999),
+                ),
+                Positioned(
+                  top: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(color: const Color(0x33D4F33A), borderRadius: BorderRadius.circular(10)),
+                    child: Text('LV ${_p.level}', style: const TextStyle(color: AppColors.lime, fontWeight: FontWeight.w900)),
+                  ),
                 ),
               ],
             ),
           ),
-          Expanded(
-            flex: 6,
-            child: Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const SectionLabel('Player name'),
-                  TextField(
-                    controller: _name,
-                    maxLength: 14,
-                    textCapitalization: TextCapitalization.words,
-                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
-                    decoration: const InputDecoration(counterText: '', hintText: 'Your name'),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: 12),
-                  const SectionLabel('Jersey number'),
-                  Row(
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _name,
+                  maxLength: 14,
+                  textCapitalization: TextCapitalization.words,
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                  decoration: const InputDecoration(
+                      counterText: '', hintText: 'Your name', prefixIcon: Icon(Icons.person_rounded, size: 20)),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+              const SizedBox(width: 8),
+              PressScale(
+                onTap: _editNumber,
+                child: Container(
+                  height: 50,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(color: const Color(0x22FFFFFF), borderRadius: BorderRadius.circular(14)),
+                  child: Row(
                     children: [
-                      _roundBtn(Icons.remove, () => _edit(() => _p.look.number = (_p.look.number - 1).clamp(0, 99))),
-                      Expanded(
-                        child: Center(
-                          child: Text('${_p.look.number}',
-                              style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
-                        ),
-                      ),
-                      _roundBtn(Icons.add, () => _edit(() => _p.look.number = (_p.look.number + 1).clamp(0, 99))),
+                      Text('#${_p.look.number}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+                      const SizedBox(width: 6),
+                      const Icon(Icons.edit_rounded, size: 18, color: AppColors.lime),
                     ],
                   ),
-                ],
+                ),
               ),
-            ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          BigButton(
+            label: widget.firstRun ? "LET'S PLAY" : 'SAVE',
+            icon: Icons.check_circle_rounded,
+            colors: const [AppColors.lime, Color(0xFF9CFF57)],
+            onTap: _save,
           ),
         ],
       ),
@@ -182,67 +225,73 @@ class _CustomizeScreenState extends State<CustomizeScreen> with SingleTickerProv
   Widget _roundBtn(IconData icon, VoidCallback onTap) => PressScale(
         onTap: onTap,
         child: Container(
-          width: 40,
-          height: 40,
+          width: 36,
+          height: 36,
           decoration: const BoxDecoration(color: Color(0x22FFFFFF), shape: BoxShape.circle),
-          child: Icon(icon, size: 20),
+          child: Icon(icon, size: 18),
         ),
       );
 
   Widget _scroll(List<Widget> children) => ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        padding: const EdgeInsets.fromLTRB(12, 10, 16, 12),
         children: children,
       );
 
   Widget _faceTab() {
     return _scroll([
-      GlassCard(
-        child: Row(
-          children: [
-            FaceAvatar(profile: _p, size: 92),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: GlassCard(
+              child: Row(
                 children: [
-                  Text(_p.face == null ? 'No photo yet' : 'Looking good!',
-                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Your face appears on your character and on your opponent\'s phone. '
-                    'AI face detection crops it automatically.',
-                    style: TextStyle(color: AppColors.muted, fontSize: 12.5),
+                  FaceAvatar(profile: _p, size: 80),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(_p.face == null ? 'No photo yet' : 'Looking good!',
+                            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 17)),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Your face appears on your character and on everyone\'s phone in multiplayer. '
+                          'AI face detection crops it automatically.',
+                          style: TextStyle(color: AppColors.muted, fontSize: 12),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 12),
-      Row(
-        children: [
-          Expanded(
-            child: _actionTile(Icons.camera_alt_rounded, 'Take selfie', AppColors.lime,
-                _busy ? null : () => _pickFace(ImageSource.camera)),
           ),
           const SizedBox(width: 10),
-          Expanded(
-            child: _actionTile(Icons.photo_library_rounded, 'From gallery', AppColors.blue,
-                _busy ? null : () => _pickFace(ImageSource.gallery)),
+          SizedBox(
+            width: 170,
+            child: Column(
+              children: [
+                _actionTile(Icons.camera_alt_rounded, 'Take selfie', AppColors.lime,
+                    _busy ? null : () => _pickFace(ImageSource.camera)),
+                const SizedBox(height: 8),
+                _actionTile(Icons.photo_library_rounded, 'From gallery', AppColors.blue,
+                    _busy ? null : () => _pickFace(ImageSource.gallery)),
+                if (_p.face != null) ...[
+                  const SizedBox(height: 8),
+                  _actionTile(Icons.delete_outline_rounded, 'Cartoon face', AppColors.pink,
+                      () => setState(() => _p.face = null)),
+                ],
+              ],
+            ),
           ),
         ],
       ),
-      if (_p.face != null) ...[
-        const SizedBox(height: 10),
-        _actionTile(Icons.delete_outline_rounded, 'Use cartoon face instead', AppColors.pink,
-            () => setState(() => _p.face = null)),
-      ],
-      if (_busy) const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator())),
-      const SizedBox(height: 16),
+      if (_busy) const Padding(padding: EdgeInsets.all(12), child: Center(child: CircularProgressIndicator())),
+      const SizedBox(height: 12),
       const SectionLabel('Skin tone'),
       _swatches(AppColors.skins, _p.look.skin, (c) => _edit(() => _p.look.skin = c)),
-      const SizedBox(height: 16),
+      const SizedBox(height: 12),
       const SectionLabel('Hair (cartoon face)'),
       _swatches(AppColors.hairs, _p.look.hair, (c) => _edit(() => _p.look.hair = c)),
     ]);
@@ -253,14 +302,14 @@ class _CustomizeScreenState extends State<CustomizeScreen> with SingleTickerProv
       opacity: onTap == null ? 0.5 : 1,
       child: GlassCard(
         onTap: onTap,
-        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
         borderColor: color.withValues(alpha: 0.5),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: color),
+            Icon(icon, color: color, size: 20),
             const SizedBox(width: 8),
-            Flexible(child: Text(label, style: const TextStyle(fontWeight: FontWeight.w800))),
+            Flexible(child: Text(label, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13))),
           ],
         ),
       ),
@@ -269,24 +318,22 @@ class _CustomizeScreenState extends State<CustomizeScreen> with SingleTickerProv
 
   Widget _swatches(List<int> colors, int selected, ValueChanged<int> onPick) {
     return Wrap(
-      spacing: 10,
-      runSpacing: 10,
+      spacing: 9,
+      runSpacing: 9,
       children: [
         for (final c in colors)
           PressScale(
             onTap: () => onPick(c),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 150),
-              width: 38,
-              height: 38,
+              width: 36,
+              height: 36,
               decoration: BoxDecoration(
                 color: Color(c),
                 shape: BoxShape.circle,
-                border: Border.all(
-                    color: c == selected ? AppColors.lime : Colors.white24, width: c == selected ? 3.5 : 1.5),
-                boxShadow: c == selected
-                    ? [BoxShadow(color: AppColors.lime.withValues(alpha: 0.5), blurRadius: 10)]
-                    : null,
+                border: Border.all(color: c == selected ? AppColors.lime : Colors.white24, width: c == selected ? 3.5 : 1.5),
+                boxShadow:
+                    c == selected ? [BoxShadow(color: AppColors.lime.withValues(alpha: 0.5), blurRadius: 10)] : null,
               ),
               child: c == selected
                   ? Icon(Icons.check, size: 18, color: Color(c).computeLuminance() > 0.5 ? Colors.black : Colors.white)
@@ -301,10 +348,10 @@ class _CustomizeScreenState extends State<CustomizeScreen> with SingleTickerProv
     return _scroll([
       const SectionLabel('Jersey'),
       _swatches(AppColors.palette, _p.look.jersey, (c) => _edit(() => _p.look.jersey = c)),
-      const SizedBox(height: 18),
+      const SizedBox(height: 14),
       const SectionLabel('Shorts'),
       _swatches(AppColors.palette, _p.look.shorts, (c) => _edit(() => _p.look.shorts = c)),
-      const SizedBox(height: 18),
+      const SizedBox(height: 14),
       const SectionLabel('Shoes'),
       _swatches(AppColors.palette, _p.look.shoes, (c) => _edit(() => _p.look.shoes = c)),
     ]);
@@ -314,7 +361,7 @@ class _CustomizeScreenState extends State<CustomizeScreen> with SingleTickerProv
     return _scroll([
       const SectionLabel('Paddle color'),
       _swatches(AppColors.palette, _p.look.paddle, (c) => _edit(() => _p.look.paddle = c)),
-      const SizedBox(height: 18),
+      const SizedBox(height: 14),
       const SectionLabel('Paddle design'),
       ChoiceChipRow<PaddlePattern>(
         values: PaddlePattern.values,
@@ -322,7 +369,7 @@ class _CustomizeScreenState extends State<CustomizeScreen> with SingleTickerProv
         label: (v) => v.label,
         onSelected: (v) => _edit(() => _p.look.pattern = v),
       ),
-      const SizedBox(height: 18),
+      const SizedBox(height: 14),
       const SectionLabel('Headwear & accessories'),
       ChoiceChipRow<Accessory>(
         values: Accessory.values,
@@ -333,12 +380,65 @@ class _CustomizeScreenState extends State<CustomizeScreen> with SingleTickerProv
     ]);
   }
 
+  static const _specialIcons = {
+    SpecialSkill.fireSmash: Icons.local_fire_department_rounded,
+    SpecialSkill.iceFreeze: Icons.ac_unit_rounded,
+    SpecialSkill.thunderCurve: Icons.bolt_rounded,
+    SpecialSkill.phantomDrop: Icons.blur_on_rounded,
+    SpecialSkill.tornadoLob: Icons.cyclone_rounded,
+  };
+
+  Widget _specialTab() {
+    return _scroll([
+      const Text(
+        'Your special meter fills up when you hit the ball and win points. When it is full, tap SPECIAL: '
+        'the game goes into slow motion and your next shot becomes your special attack.',
+        style: TextStyle(color: AppColors.muted, fontSize: 12.5),
+      ),
+      const SizedBox(height: 10),
+      for (final sk in SpecialSkill.values)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: GlassCard(
+            onTap: () => _edit(() => _p.special = sk),
+            padding: const EdgeInsets.all(10),
+            borderColor: _p.special == sk ? Color(sk.color) : null,
+            gradient: _p.special == sk
+                ? LinearGradient(colors: [Color(sk.color).withValues(alpha: 0.35), AppColors.card.withValues(alpha: 0.9)])
+                : null,
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(color: Color(sk.color).withValues(alpha: 0.2), shape: BoxShape.circle),
+                  child: Icon(_specialIcons[sk], color: Color(sk.color), size: 26),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(sk.label,
+                          style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: Color(sk.color))),
+                      Text(sk.description, style: const TextStyle(fontSize: 12)),
+                    ],
+                  ),
+                ),
+                if (_p.special == sk) const Icon(Icons.check_circle_rounded, color: AppColors.lime),
+              ],
+            ),
+          ),
+        ),
+    ]);
+  }
+
   Widget _statsTab() {
     final st = _p.stats;
     final left = PlayerStats.budget - st.total;
     Widget row(String name, String desc, IconData icon, Color color, int value, ValueChanged<int> set) {
       return GlassCard(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -346,70 +446,52 @@ class _CustomizeScreenState extends State<CustomizeScreen> with SingleTickerProv
               children: [
                 Icon(icon, color: color),
                 const SizedBox(width: 8),
-                Text(name, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-                const Spacer(),
+                Text(name, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
+                const SizedBox(width: 10),
+                Expanded(child: Text(desc, style: const TextStyle(color: AppColors.muted, fontSize: 11.5))),
                 _roundBtn(Icons.remove, () {
                   if (value > PlayerStats.minStat) _edit(() => set(value - 1));
                 }),
                 SizedBox(
-                    width: 36,
-                    child: Center(
-                        child: Text('$value', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 20)))),
+                    width: 32,
+                    child: Center(child: Text('$value', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)))),
                 _roundBtn(Icons.add, () {
                   if (value < PlayerStats.maxStat && left > 0) _edit(() => set(value + 1));
                 }),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Row(
               children: [
                 for (var i = 1; i <= PlayerStats.maxStat; i++)
                   Expanded(
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
-                      height: 8,
+                      height: 7,
                       margin: const EdgeInsets.symmetric(horizontal: 2),
                       decoration: BoxDecoration(
-                        color: i <= value ? color : Colors.white12,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
+                          color: i <= value ? color : Colors.white12, borderRadius: BorderRadius.circular(4)),
                     ),
                   ),
               ],
             ),
-            const SizedBox(height: 6),
-            Text(desc, style: const TextStyle(color: AppColors.muted, fontSize: 12)),
           ],
         ),
       );
     }
 
     return _scroll([
-      GlassCard(
-        gradient: LinearGradient(colors: [
-          (left > 0 ? AppColors.orange : AppColors.mint).withValues(alpha: 0.35),
-          AppColors.card.withValues(alpha: 0.6)
-        ]),
-        child: Row(
-          children: [
-            const Icon(Icons.stars_rounded, color: Colors.white),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(left > 0 ? '$left skill point${left == 1 ? '' : 's'} left to spend' : 'All skill points spent',
-                  style: const TextStyle(fontWeight: FontWeight.w800)),
-            ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 10),
-      row('SPEED', 'How fast you run (${st.runSpeed.toStringAsFixed(1)} m/s)', Icons.directions_run_rounded,
-          AppColors.blue, st.speed, (v) => st.speed = v),
-      const SizedBox(height: 10),
-      row('POWER', 'Faster drives and smashes', Icons.flash_on_rounded, AppColors.orange, st.power,
+      Text(left > 0 ? '$left skill point${left == 1 ? '' : 's'} left to spend' : 'All skill points spent',
+          style: TextStyle(fontWeight: FontWeight.w800, color: left > 0 ? AppColors.orange : AppColors.mint)),
+      const SizedBox(height: 8),
+      row('SPEED', 'Run speed ${st.runSpeed.toStringAsFixed(1)} m/s', Icons.directions_run_rounded, AppColors.blue,
+          st.speed, (v) => st.speed = v),
+      const SizedBox(height: 8),
+      row('POWER', 'Faster POWER shots and smashes', Icons.flash_on_rounded, AppColors.orange, st.power,
           (v) => st.power = v),
-      const SizedBox(height: 10),
-      row('CONTROL', 'More accurate shots, fewer outs and net balls', Icons.gps_fixed_rounded, AppColors.mint,
-          st.control, (v) => st.control = v),
+      const SizedBox(height: 8),
+      row('CONTROL', 'More accurate, fewer outs and net balls', Icons.gps_fixed_rounded, AppColors.mint, st.control,
+          (v) => st.control = v),
     ]);
   }
 }

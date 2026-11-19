@@ -92,8 +92,8 @@ class PlayerStats {
 
   int get total => speed + power + control;
 
-  /// Movement speed in m/s.
-  double get runSpeed => 3.6 + 0.22 * speed;
+  /// Movement speed in m/s (same formula for humans and AI).
+  double get runSpeed => 4.0 + 0.25 * speed;
 
   PlayerStats copy() => PlayerStats(speed: speed, power: power, control: control);
 
@@ -107,17 +107,74 @@ class PlayerStats {
       );
 }
 
+/// Each player brings one special attack, charged by playing well.
+enum SpecialSkill { fireSmash, iceFreeze, thunderCurve, phantomDrop, tornadoLob }
+
+extension SpecialSkillInfo on SpecialSkill {
+  String get label => switch (this) {
+        SpecialSkill.fireSmash => 'FIRE SMASH',
+        SpecialSkill.iceFreeze => 'ICE FREEZE',
+        SpecialSkill.thunderCurve => 'THUNDER CURVE',
+        SpecialSkill.phantomDrop => 'PHANTOM DROP',
+        SpecialSkill.tornadoLob => 'TORNADO HIGH',
+      };
+
+  String get description => switch (this) {
+        SpecialSkill.fireSmash =>
+          'A blazing, super-fast shot. Whoever returns it has a burned paddle: their next shot is wild.',
+        SpecialSkill.iceFreeze =>
+          'When the ball crosses the net, the other team is frozen and moves very slowly for a moment.',
+        SpecialSkill.thunderCurve =>
+          'Starts one way, then bends sharply in the air like lightning. Hard to read.',
+        SpecialSkill.phantomDrop =>
+          'A soft drop that turns almost invisible and barely bounces. Deadly when they stand far back.',
+        SpecialSkill.tornadoLob =>
+          'A high spinning shot that kicks sideways and jumps up after it bounces.',
+      };
+
+  /// Main color of the effect (ARGB).
+  int get color => switch (this) {
+        SpecialSkill.fireSmash => 0xFFFF6A1A,
+        SpecialSkill.iceFreeze => 0xFF7FE3FF,
+        SpecialSkill.thunderCurve => 0xFFFFE94D,
+        SpecialSkill.phantomDrop => 0xFFB98CFF,
+        SpecialSkill.tornadoLob => 0xFF6BFFB0,
+      };
+}
+
+/// Experience levels shown on the profile.
+class PlayerLevel {
+  static const titles = ['Rookie', 'Amateur', 'Contender', 'Pro', 'Elite', 'Champion', 'Legend'];
+
+  /// Total XP needed to reach [level] (level 1 = 0 XP).
+  static int xpFor(int level) => level <= 1 ? 0 : 100 * (level - 1) * level ~/ 2 + 150 * (level - 1);
+
+  static int levelOf(int xp) {
+    var l = 1;
+    while (xpFor(l + 1) <= xp) {
+      l++;
+    }
+    return l;
+  }
+
+  static String titleOf(int level) => titles[((level - 1) ~/ 3).clamp(0, titles.length - 1)];
+}
+
 class PlayerProfile {
   String name;
   CharacterLook look;
   PlayerStats stats;
   Uint8List? face; // small square JPEG of the player's face
+  SpecialSkill special;
+  int xp;
 
   PlayerProfile({
     required this.name,
     CharacterLook? look,
     PlayerStats? stats,
     this.face,
+    this.special = SpecialSkill.fireSmash,
+    this.xp = 0,
   })  : look = look ?? CharacterLook(),
         stats = stats ?? PlayerStats();
 
@@ -129,8 +186,16 @@ class PlayerProfile {
     );
   }
 
+  int get level => PlayerLevel.levelOf(xp);
+  String get title => PlayerLevel.titleOf(level);
+
   PlayerProfile copy() => PlayerProfile(
-      name: name, look: look.copy(), stats: stats.copy(), face: face);
+      name: name,
+      look: look.copy(),
+      stats: stats.copy(),
+      face: face,
+      special: special,
+      xp: xp);
 
   String get initials {
     final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty);
@@ -142,6 +207,8 @@ class PlayerProfile {
         'name': name,
         'look': look.toJson(),
         'stats': stats.toJson(),
+        'special': special.index,
+        'xp': xp,
         if (includeFace && face != null) 'face': base64Encode(face!),
       };
 
@@ -164,6 +231,9 @@ class PlayerProfile {
       stats: PlayerStats.fromJson(
           (j['stats'] as Map?)?.cast<String, dynamic>() ?? const {}),
       face: face,
+      special: SpecialSkill.values[
+          ((j['special'] as int?) ?? 0).clamp(0, SpecialSkill.values.length - 1)],
+      xp: ((j['xp'] as int?) ?? 0).clamp(0, 1 << 30),
     );
   }
 }

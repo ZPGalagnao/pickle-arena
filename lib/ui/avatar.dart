@@ -180,7 +180,7 @@ class _PreviewPainter extends CustomPainter {
     final t = time.value;
     // fit the whole character (incl. the swinging paddle) inside the box
     final ppm = math.min(size.height / (2.45 * CharacterPainter.visualScale),
-        size.width / (2.6 * CharacterPainter.visualScale));
+        size.width / (1.55 * CharacterPainter.visualScale));
     final feet = Offset(size.width / 2, size.height * 0.97);
     // swing every 2.4 s, cycling the three shots
     final cycle = t % 2.4;

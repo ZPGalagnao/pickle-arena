@@ -11,6 +11,8 @@ import '../shot_planner.dart';
 class CharacterPainter {
   static const double visualScale = 1.35;
 
+  /// [pose]: 0 = playing, 1 = celebrating (victory), 2 = sad (defeat).
+  /// [aura] glows around a player whose special attack is armed or ready.
   static void paint(
     Canvas canvas,
     Offset feet,
@@ -26,32 +28,55 @@ class CharacterPainter {
     bool backView = true,
     double time = 0,
     bool shadow = true,
+    int pose = 0,
+    Color? aura,
+    double auraStrength = 1,
+    bool frozen = false,
   }) {
     final u = ppm * visualScale;
-    final move = (moveSpeed / 3.5).clamp(0.0, 1.0);
+    final celebrate = pose == 1, sad = pose == 2;
+    final move = celebrate || sad ? 0.0 : (moveSpeed / 3.5).clamp(0.0, 1.0);
     final bob = math.sin(runPhase * math.pi * 2).abs() * 0.035 * u * move;
+    final hop = celebrate ? math.sin(time * 7).abs() * 0.32 * u : 0.0;
+    final slump = sad ? 0.07 * u : 0.0;
     final skin = Color(look.skin);
     final jersey = Color(look.jersey);
 
-    if (shadow) {
+    if (aura != null) {
+      final pulse = 0.6 + 0.4 * math.sin(time * 8);
+      final c = feet + Offset(0, -0.9 * u);
       canvas.drawOval(
-          Rect.fromCenter(center: feet, width: 0.95 * u, height: 0.3 * u),
+          Rect.fromCenter(center: c, width: 1.6 * u, height: 2.6 * u),
+          Paint()
+            ..shader = ui.Gradient.radial(c, 1.3 * u, [
+              aura.withValues(alpha: 0.45 * pulse * auraStrength),
+              aura.withValues(alpha: 0),
+            ]));
+      canvas.drawOval(
+          Rect.fromCenter(center: feet, width: 1.3 * u, height: 0.42 * u),
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 0.06 * u
+            ..color = aura.withValues(alpha: 0.9 * auraStrength));
+    }
+    if (shadow) {
+      canvas.drawOval(Rect.fromCenter(center: feet, width: (0.95 - hop / u * 0.6) * u, height: 0.3 * u),
           Paint()..color = const Color(0x55000000));
     }
     canvas.save();
-    canvas.translate(feet.dx, feet.dy - bob);
+    canvas.translate(feet.dx, feet.dy - bob - hop);
 
     // ------------------------------------------------------------ legs
-    final legSwing = math.sin(runPhase * math.pi * 2) * 0.5 * move;
+    final legSwing = celebrate ? 0.0 : math.sin(runPhase * math.pi * 2) * 0.5 * move;
     final legPaint = Paint()
       ..color = skin
       ..strokeWidth = 0.13 * u
       ..strokeCap = StrokeCap.round;
     final shoePaint = Paint()..color = Color(look.shoes);
     for (final s in [-1, 1]) {
-      final hip = Offset(s * 0.11 * u, -0.74 * u);
-      final a = legSwing * s;
-      final foot = hip + Offset(math.sin(a) * 0.7 * u, math.cos(a) * 0.7 * u);
+      final hip = Offset(s * 0.11 * u, -0.74 * u + slump);
+      final a = legSwing * s + (celebrate ? s * 0.18 : 0);
+      final foot = hip + Offset(math.sin(a) * 0.7 * u, math.cos(a) * 0.7 * u - slump);
       canvas.drawLine(hip, foot, legPaint);
       canvas.drawRRect(
           RRect.fromRectAndRadius(
@@ -59,17 +84,22 @@ class CharacterPainter {
               Radius.circular(0.05 * u)),
           shoePaint);
     }
+    canvas.translate(0, slump);
     // ----------------------------------------------------------- shorts
     canvas.drawRRect(
-        RRect.fromRectAndRadius(
-            Rect.fromLTRB(-0.25 * u, -0.95 * u, 0.25 * u, -0.66 * u), Radius.circular(0.07 * u)),
+        RRect.fromRectAndRadius(Rect.fromLTRB(-0.25 * u, -0.95 * u, 0.25 * u, -0.66 * u), Radius.circular(0.07 * u)),
         Paint()..color = Color(look.shorts));
 
     // ------------------------------------------------------------ arms
     final handSide = (backView ? 1 : -1) * (swingHand >= 0 ? 1 : -1);
     final t = swing > 0 ? (1 - swing / 0.32).clamp(0.0, 1.0) : -1.0;
+    final flex = celebrate && (time % 2.4) > 1.2; // alternate: arms up / flex
     double theta; // 0 = arm hanging down, positive = raised outward
-    if (t < 0) {
+    if (celebrate) {
+      theta = flex ? 1.9 : 2.85 + math.sin(time * 10) * 0.15;
+    } else if (sad) {
+      theta = 0.12;
+    } else if (t < 0) {
       theta = 0.95 + math.sin(time * 2.2) * 0.06;
     } else {
       final e = 1 - math.pow(1 - t, 3).toDouble();
@@ -88,9 +118,23 @@ class CharacterPainter {
       ..strokeWidth = 0.11 * u
       ..strokeCap = StrokeCap.round;
     // free arm
-    final freeHand = otherShoulder +
-        Offset(-handSide * 0.16 * u, 0.36 * u + math.sin(runPhase * math.pi * 2) * 0.05 * u);
-    canvas.drawLine(otherShoulder, freeHand, armPaint);
+    if (celebrate && flex) {
+      // bicep flex: elbow out, fist up
+      final elbow = otherShoulder + Offset(-handSide * 0.32 * u, 0.02 * u);
+      canvas.drawLine(otherShoulder, elbow, armPaint);
+      canvas.drawLine(elbow, elbow + Offset(0, -0.3 * u), armPaint);
+      canvas.drawCircle(elbow + Offset(0, -0.32 * u), 0.08 * u, Paint()..color = skin);
+      canvas.drawCircle(otherShoulder + Offset(-handSide * 0.16 * u, -0.04 * u), 0.09 * u,
+          Paint()..color = Color.lerp(skin, Colors.black, 0.08)!);
+    } else if (celebrate) {
+      final fist = otherShoulder + Offset(-handSide * 0.22 * u, -0.4 * u + math.sin(time * 10 + 1) * 0.04 * u);
+      canvas.drawLine(otherShoulder, fist, armPaint);
+      canvas.drawCircle(fist, 0.07 * u, Paint()..color = skin);
+    } else {
+      final freeHand = otherShoulder +
+          Offset(-handSide * (sad ? 0.05 : 0.16) * u, 0.38 * u + math.sin(runPhase * math.pi * 2) * 0.05 * u);
+      canvas.drawLine(otherShoulder, freeHand, armPaint);
+    }
 
     // ---------------------------------------------------------- torso
     final torso = RRect.fromRectAndRadius(
@@ -119,26 +163,54 @@ class CharacterPainter {
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    final numberPos = backView
-        ? Offset(-tp.width / 2, -1.16 * u - tp.height / 2)
-        : Offset(0.06 * u, -1.3 * u);
+    final numberPos = backView ? Offset(-tp.width / 2, -1.16 * u - tp.height / 2) : Offset(0.06 * u, -1.3 * u);
     tp.paint(canvas, numberPos);
 
     // paddle arm (drawn after torso so it can swing in front)
-    final hand = paddleShoulder +
-        Offset(math.sin(theta) * handSide * 0.42 * u, math.cos(theta) * 0.42 * u);
+    final hand = paddleShoulder + Offset(math.sin(theta) * handSide * 0.42 * u, math.cos(theta) * 0.42 * u);
     canvas.drawLine(paddleShoulder, hand, armPaint);
     _paddle(canvas, hand, theta, handSide, u, look);
 
     // ------------------------------------------------------------- head
     canvas.drawRect(Rect.fromLTRB(-0.06 * u, -1.56 * u, 0.06 * u, -1.42 * u),
         Paint()..color = Color.lerp(skin, Colors.black, 0.12)!);
-    final wobble = math.sin(time * 9 + runPhase) * 0.05 * move;
+    final wobble =
+        sad ? 0.28 : math.sin(time * (celebrate ? 14 : 9) + runPhase) * (celebrate ? 0.12 : 0.05 * move);
     canvas.save();
-    canvas.translate(0, -1.82 * u);
+    canvas.translate(0, -1.82 * u + (sad ? 0.08 * u : 0));
     canvas.rotate(wobble);
     paintFace(canvas, Offset.zero, 0.36 * u, look, face: face, initials: initials);
+    if (sad) {
+      // a tear and a gloomy shade
+      canvas.drawCircle(Offset.zero, 0.36 * u, Paint()..color = const Color(0x2A1A237E));
+      final tear = Path()
+        ..moveTo(0.14 * u, 0.02 * u)
+        ..quadraticBezierTo(0.2 * u, 0.14 * u, 0.14 * u, 0.18 * u)
+        ..quadraticBezierTo(0.08 * u, 0.14 * u, 0.14 * u, 0.02 * u);
+      canvas.drawPath(tear, Paint()..color = const Color(0xDD4FC3F7));
+    }
     canvas.restore();
+
+    if (frozen) {
+      // encased in ice
+      final ice = RRect.fromRectAndRadius(
+          Rect.fromLTRB(-0.48 * u, -2.3 * u, 0.48 * u, 0.02 * u), Radius.circular(0.2 * u));
+      canvas.drawRRect(
+          ice,
+          Paint()
+            ..shader = ui.Gradient.linear(Offset(0, -2.3 * u), Offset.zero,
+                const [Color(0x88E1F5FE), Color(0x5581D4FA), Color(0x8881D4FA)], const [0, 0.5, 1]));
+      canvas.drawRRect(
+          ice,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 0.04 * u
+            ..color = const Color(0xCCFFFFFF));
+      final glint = Paint()
+        ..color = Colors.white
+        ..strokeWidth = 0.03 * u;
+      canvas.drawLine(Offset(-0.32 * u, -2.0 * u), Offset(-0.18 * u, -1.6 * u), glint);
+    }
 
     canvas.restore();
   }

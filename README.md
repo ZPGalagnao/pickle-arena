@@ -1,32 +1,48 @@
 # Pickle Arena
 
-**A mobile pickleball game with a neural-network AI opponent, phone-vs-phone Wi-Fi multiplayer,
-and characters that wear your own face.** Built with Flutter (Android) and TensorFlow/Keras.
+**A mobile pickleball game with neural-network AI opponents, singles and doubles, phone-vs-phone
+Wi-Fi multiplayer, special attacks in slow motion, and characters that wear your own face.**
+Built with Flutter (Android) and TensorFlow/Keras.
 
 <p align="center">
-  <img src="docs/screenshots/1_home.png" width="23%" alt="Home screen">
-  <img src="docs/screenshots/6_game_rally_1.png" width="23%" alt="A rally against the AI">
-  <img src="docs/screenshots/2_customize.png" width="23%" alt="Character customization">
-  <img src="docs/screenshots/7_game_over.png" width="23%" alt="Match results">
+  <img src="docs/screenshots/6_game_singles.png" width="49%" alt="A singles rally in the stadium">
+  <img src="docs/screenshots/7_game_doubles_special.png" width="49%" alt="Doubles: ICE FREEZE special attack">
+  <img src="docs/screenshots/8_victory.png" width="49%" alt="Victory celebration">
+  <img src="docs/screenshots/9_results.png" width="49%" alt="Match ranking and XP">
+  <img src="docs/screenshots/1_home.png" width="49%" alt="Home screen">
+  <img src="docs/screenshots/2b_customize_special.png" width="49%" alt="Choosing a special attack">
 </p>
 
 **Download:** get the APK from the [Releases](../../releases/latest) page
 (`PickleArena-arm64.apk` works on most phones; use `PickleArena-universal.apk` for older 32-bit phones).
 
 **Tech:** Flutter / Dart (custom 2.5D renderer, no game engine) · TensorFlow / Keras · NumPy ·
-Google ML Kit face detection · UDP discovery + TCP sockets · Kotlin (Android multicast lock)
+Google ML Kit face detection · UDP discovery + TCP sockets · Kotlin (Android multicast lock) ·
+procedurally synthesized audio
 
 ## Features
 
-- **VS AI mode** – 5 AI opponents driven by two neural networks trained in Python (TensorFlow/Keras).
-- **Wi-Fi multiplayer** – phone vs phone on the same Wi-Fi network or a phone hotspot. No internet needed.
+- **VS AI** – singles, or doubles with an AI partner. 5 AI opponents driven by two neural networks trained
+  in Python (TensorFlow/Keras); in doubles the AIs split the court and cover for their partner.
+- **Wi-Fi multiplayer** – 2 to 4 phones on the same Wi-Fi or a phone hotspot, no internet needed.
+  Singles or doubles; empty doubles spots are played by the AI (choose its level).
+- **Special attacks** – a meter fills as you play; when full, tap SPECIAL: the game goes into slow motion
+  and your next shot becomes FIRE SMASH (burns the returner's paddle), ICE FREEZE (freezes the other team),
+  THUNDER CURVE (bends in the air), PHANTOM DROP (turns invisible, barely bounces) or TORNADO HIGH
+  (kicks sideways). The AI uses its own special at smart moments.
+- **Tactics** – POWER / SOFT / HIGH shots; hold the joystick left/right to aim and up/down to hit deeper or
+  shorter (e.g. a short SOFT drop when your opponent is far back).
 - **Character customization** – your own face (selfie or gallery, auto-cropped with ML Kit face detection),
-  jersey/shorts/shoe colors, paddle color and design, headwear, jersey number and skill points
-  (Speed / Power / Control).
-- **Phone controls** – floating touch joystick + DRIVE / DINK / LOB buttons, or tilt-to-move with the
-  accelerometer. Haptic feedback on hits.
-- Real pickleball rules: diagonal underhand serve, two-bounce rule, kitchen (non-volley zone),
-  out / net / double-bounce faults, rally or traditional side-out scoring, win by 2.
+  jersey/shorts/shoe colors, paddle color and design, headwear, editable jersey number, skill points
+  (Speed / Power / Control) and your special attack.
+- **Stadium atmosphere** – a crowd that jumps, waves and holds up signs; cheers, "aww"s and applause;
+  footsteps, paddle pops, special-attack sounds and two music loops, all synthesized in Python.
+- **Victory scene, ranking and XP** – the winners celebrate in slow motion while the losers hang their heads,
+  then everyone is ranked (MVP) and you earn XP and level up (Rookie to Legend).
+- **Phone controls** – landscape; floating joystick with move assist, or tilt-to-move; haptics.
+- Real pickleball rules: diagonal underhand serve, two-bounce rule, kitchen (non-volley zone), out / net /
+  double-bounce faults, rally or traditional scoring, doubles side switching, second server and 0-0-2 start,
+  win by 2.
 
 ## Folder structure
 
@@ -40,17 +56,20 @@ pickle_arena/
 │  │  ├─ physics.dart           exact ball physics (gravity + drag, bounces, net)
 │  │  ├─ shot_planner.dart      turns "DRIVE to that spot" into a launch velocity
 │  │  ├─ game_state.dart        match state + network snapshot format
-│  │  ├─ engine.dart            rules, scoring, hitting, movement (authoritative)
-│  │  ├─ session.dart           VS-AI / Host / Client sessions (client-side prediction)
+│  │  ├─ engine.dart            rules, scoring, specials, doubles serving (authoritative)
+│  │  ├─ session.dart           VS-AI / Host (up to 4 phones + AI fill-ins) / Client sessions
 │  │  ├─ ai/brain.dart          runs the trained neural networks on the phone
 │  │  ├─ ai/ai_controller.dart  AI player logic + difficulty levels
-│  │  ├─ ai/roster.dart         the 5 AI opponents
-│  │  └─ render/                2.5D court, bobble-head characters with face photos, effects
+│  │  ├─ ai/roster.dart         the 5 AI opponents, their styles and specials
+│  │  └─ render/                stadium + crowd, bobble-head characters, special FX, victory poses
 │  ├─ net/lan.dart              UDP room discovery + TCP game connection
 │  ├─ services/face_service.dart camera/gallery + ML Kit face detection + crop
+│  ├─ services/sound_service.dart sound effects, crowd and music
 │  ├─ screens/                  home, customize, face crop, VS AI, lobby, game, settings, guide
 │  └─ ui/                       theme, joystick/buttons/tilt, avatars
 ├─ assets/ai/pickle_brain.json  trained weights (exported by training/train_ai.py)
+├─ assets/audio/                27 sounds + music (made by tools/make_sounds.py)
+├─ tools/make_sounds.py         synthesizes every sound effect and music loop with NumPy
 ├─ training/
 │  ├─ pickle_sim.py             Python twin of the game physics
 │  ├─ train_ai.py               data generation + training + export
@@ -118,10 +137,13 @@ flutter test test/screenshot_capture.dart --dart-define=OUT=build/screens --dart
 
 ## Playing multiplayer
 
-1. Put both phones on the same Wi-Fi, **or** turn on the Hotspot on one phone and connect the other to it.
-2. Phone A: **Multiplayer → Host a game** (with a hotspot, the hotspot phone should host).
-3. Phone B: **Multiplayer → Join a game** and tap the room. If it doesn't appear, type the IP shown on phone A.
-4. The host picks the points and scoring and taps **Start match**.
+1. Put all phones on the same Wi-Fi, **or** turn on the Hotspot on one phone and connect the others to it.
+2. Phone A: **Multiplayer > Host a game** (with a hotspot, the hotspot phone should host). Pick Singles or
+   Doubles, the points and the scoring.
+3. Other phones: **Multiplayer > Join a game** and tap the room. If it doesn't appear, type the IP shown on phone A.
+   In doubles the first guest plays against the host, the second becomes the host's partner; the host can move
+   players between teams. Empty spots are played by the AI.
+4. The host taps **Start match**.
 
-The host phone runs the game engine and sends 30 snapshots per second; the joining phone sends its
+The host phone runs the game engine and sends 30 snapshots per second; each joining phone sends its
 joystick/buttons and predicts its own movement so it feels instant.

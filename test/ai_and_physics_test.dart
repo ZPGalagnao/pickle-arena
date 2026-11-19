@@ -243,4 +243,152 @@ void main() {
     expect(copy.players[1].y, closeTo(e.s.players[1].y, 1e-3));
     expect(copy.phase, e.s.phase);
   });
+
+  // ---------------------------------------------------------------- doubles
+  List<PlayerProfile> four([List<SpecialSkill>? specials]) => [
+        for (var i = 0; i < 4; i++)
+          PlayerProfile(name: 'P$i', special: specials?[i] ?? SpecialSkill.values[i % SpecialSkill.values.length])
+      ];
+
+  test('AI doubles: a full 2 vs 2 match with teamwork and specials', () {
+    final profiles = four();
+    final e = GameEngine(
+      config: MatchConfig(pointsToWin: 11, gameSpeed: 1, doubles: true),
+      profiles: profiles,
+      autoHit: List.filled(4, false),
+      random: math.Random(11),
+    );
+    final ais = [
+      for (var i = 0; i < 4; i++) AiController(brain, AiDifficulty.hard, i, random: math.Random(20 + i)),
+    ];
+    var hits = 0, specials = 0, maxRally = 0;
+    final hitsBy = List.filled(4, 0);
+    for (var frame = 0; frame < 60 * 60 * 40 && e.s.phase != Phase.gameOver; frame++) {
+      final slow = e.s.slowmo > 0 ? GameEngine.slowmoScale : 1.0;
+      e.update(1 / 60, [for (var i = 0; i < 4; i++) ais[i].update(e.s, profiles[i], slow / 60)]);
+      for (final ev in e.drainEvents()) {
+        if (ev.type == 'hit' || ev.type == 'smash' || ev.type == 'special') {
+          hits++;
+          hitsBy[ev.player]++;
+        }
+        if (ev.type == 'special') specials++;
+      }
+      maxRally = math.max(maxRally, e.s.rally);
+    }
+    // ignore: avoid_print
+    print('Doubles: ${e.s.score} hits=$hits by player=$hitsBy specials=$specials longest rally=$maxRally');
+    expect(e.s.phase, Phase.gameOver);
+    expect(e.s.score[e.s.winner], greaterThanOrEqualTo(11));
+    expect(hits, greaterThan(40));
+    expect(specials, greaterThan(0), reason: 'the AI should use its special attacks');
+    for (final h in hitsBy) {
+      expect(h, greaterThan(3), reason: 'every doubles player takes part: $hitsBy');
+    }
+  });
+
+  test('doubles traditional scoring: 0-0-2 start, second server, side out', () {
+    final e = GameEngine(
+      config: MatchConfig(doubles: true, rallyScoring: false),
+      profiles: four(),
+      firstServer: 0,
+      random: math.Random(3),
+    );
+    final s = e.s;
+    expect(s.serverNumber, 2, reason: 'game starts at 0-0-2');
+    expect(s.players[0].lane, 1);
+    // serving team loses the rally -> immediate side out (only one server at 0-0-2)
+    void loseRally() {
+      s.phase = Phase.rally;
+      s.ballHeld = false;
+      s.lastHitter = s.server;
+      s.shotCount = 3;
+      s.ball
+        ..x = 0
+        ..y = s.players[s.server].side * 3.0
+        ..z = 0.5
+        ..vx = 0
+        ..vy = s.players[s.server].side * 2.0 // away from the net
+        ..vz = -4;
+      // ball lands on the hitter's own side -> fault
+      for (var k = 0; k < 60 && s.phase == Phase.rally; k++) {
+        e.update(1 / 60, List.generate(4, (_) => PlayerInput()));
+      }
+      expect(s.phase, Phase.pointOver);
+    }
+
+    void nextPoint() {
+      for (var k = 0; k < 200 && s.phase != Phase.serve; k++) {
+        e.update(1 / 60, List.generate(4, (_) => PlayerInput()));
+      }
+    }
+
+    loseRally();
+    expect(s.servingTeam, 1, reason: 'side out after the 0-0-2 server loses');
+    expect(s.serverNumber, 1);
+    expect(s.players[s.server].lane, 1, reason: 'first server after a side out is on the right');
+    nextPoint();
+    loseRally();
+    expect(s.servingTeam, 1, reason: 'partner serves next (second server)');
+    expect(s.serverNumber, 2);
+  });
+
+  test('specials: ICE freezes the other team, FIRE burns the returner, slow-mo kicks in', () {
+    for (final skill in [SpecialSkill.iceFreeze, SpecialSkill.fireSmash, SpecialSkill.thunderCurve]) {
+      final e = GameEngine(
+        config: MatchConfig(),
+        profiles: [PlayerProfile(name: 'A', special: skill), PlayerProfile(name: 'B')],
+        firstServer: 1,
+        autoHit: [false, false],
+        random: math.Random(5),
+      );
+      final s = e.s;
+      s.phase = Phase.rally;
+      s.ballHeld = false;
+      s.lastHitter = 1;
+      s.shotCount = 4;
+      s.bouncesOnReceiver = 1;
+      s.players[0]
+        ..x = 0
+        ..y = -5.5
+        ..meter = 1;
+      s.ball
+        ..x = 0.4
+        ..y = -5.4
+        ..z = 0.9
+        ..vx = 0
+        ..vy = -0.5
+        ..vz = 0;
+      final events = <String>[];
+      e.update(1 / 60, [PlayerInput(special: true), PlayerInput()]);
+      for (var k = 0; k < 120 && s.phase == Phase.rally; k++) {
+        e.update(1 / 60, [PlayerInput(), PlayerInput()]);
+        events.addAll(e.drainEvents().map((ev) => ev.type));
+        if (s.ball.y > 0.5) break;
+      }
+      expect(s.stats[0].specials, 1, reason: '$skill fired');
+      expect(s.players[0].meter, 0);
+      switch (skill) {
+        case SpecialSkill.iceFreeze:
+          expect(s.players[1].frozen, greaterThan(0));
+        case SpecialSkill.fireSmash:
+          expect(s.players[1].burned, isTrue);
+        case SpecialSkill.thunderCurve:
+          expect(s.ball.curve, isNot(0.0));
+        default:
+          break;
+      }
+    }
+  });
+
+  test('doubles snapshot round-trips through JSON', () {
+    final e = GameEngine(config: MatchConfig(doubles: true), profiles: four(), firstServer: 2);
+    e.update(0.5, List.generate(4, (_) => PlayerInput()));
+    final json = jsonDecode(jsonEncode(e.s.toJson())) as Map<String, dynamic>;
+    final copy = GameState(playerCount: 4)..applyJson(json);
+    expect(copy.server, 2);
+    for (var i = 0; i < 4; i++) {
+      expect(copy.players[i].x, closeTo(e.s.players[i].x, 1e-3));
+      expect(copy.players[i].lane, e.s.players[i].lane);
+    }
+  });
 }

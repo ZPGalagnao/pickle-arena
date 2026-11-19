@@ -1,5 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../services/sound_service.dart';
+
 class AppColors {
   static const bg = Color(0xFF07101F);
   static const bg2 = Color(0xFF0E2140);
@@ -177,7 +179,10 @@ class _PressScaleState extends State<PressScale> {
       onTapDown: (_) => setState(() => _down = true),
       onTapCancel: () => setState(() => _down = false),
       onTapUp: (_) => setState(() => _down = false),
-      onTap: widget.onTap,
+      onTap: () {
+        Sound.I.play('ui_click', volume: 0.5);
+        widget.onTap();
+      },
       child: AnimatedScale(
         scale: _down ? 0.95 : 1,
         duration: const Duration(milliseconds: 90),

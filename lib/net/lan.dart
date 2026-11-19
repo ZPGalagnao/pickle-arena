@@ -13,7 +13,7 @@ import 'package:flutter/services.dart';
 const int kGamePort = 47820;
 const int kDiscoveryPort = 47821;
 const String kMagic = 'PICKLE_ARENA_1';
-const int kProtocolVersion = 1;
+const int kProtocolVersion = 2;
 
 class NetUtil {
   static const _channel = MethodChannel('pickle_arena/net');
@@ -137,20 +137,31 @@ class JsonLineConnection {
   }
 }
 
+/// One phone that joined the room.
+class LanPeer {
+  final JsonLineConnection conn;
+  int slot = -1; // player index in the match
+  Map<String, dynamic>? profileJson;
+  bool assist = true;
+  LanPeer(this.conn);
+
+  String get address => conn.remoteAddress;
+}
+
 class LanHost {
   ServerSocket? _server;
   RawDatagramSocket? _udp;
   Timer? _beaconTimer;
-  JsonLineConnection? conn;
+  final List<LanPeer> peers = [];
+  int maxPeers = 1; // 1 for singles, up to 3 for doubles
+  bool accepting = true; // false once the match starts
   int port = kGamePort;
   List<String> ips = [];
   String roomName = 'Pickle Room';
 
-  void Function(Map<String, dynamic> msg)? onMessage;
-  void Function()? onClientConnected;
-  void Function()? onDisconnected;
-
-  bool get hasClient => conn != null && !conn!.isClosed;
+  void Function(LanPeer peer, Map<String, dynamic> msg)? onMessage;
+  void Function(LanPeer peer)? onPeerJoined;
+  void Function(LanPeer peer)? onPeerLeft;
 
   Future<void> start(String roomName) async {
     this.roomName = roomName;
@@ -161,18 +172,18 @@ class LanHost {
     }
     port = _server!.port;
     _server!.listen((socket) {
-      if (hasClient) {
-        socket.destroy(); // room is full
+      if (!accepting || peers.length >= maxPeers) {
+        socket.destroy(); // room is full or already playing
         return;
       }
-      final c = JsonLineConnection(socket);
-      c.onMessage = (m) => onMessage?.call(m);
-      c.onClosed = () {
-        if (identical(conn, c)) conn = null;
-        onDisconnected?.call();
+      final peer = LanPeer(JsonLineConnection(socket));
+      peer.conn.onMessage = (m) => onMessage?.call(peer, m);
+      peer.conn.onClosed = () {
+        peers.remove(peer);
+        onPeerLeft?.call(peer);
       };
-      conn = c;
-      onClientConnected?.call();
+      peers.add(peer);
+      onPeerJoined?.call(peer);
     });
     ips = await NetUtil.localIPv4();
     await NetUtil.acquireMulticast();
@@ -187,9 +198,14 @@ class LanHost {
   }
 
   void _beacon() {
-    if (hasClient || _udp == null) return;
-    final data = utf8.encode(jsonEncode(
-        {'magic': kMagic, 'v': kProtocolVersion, 'name': roomName, 'port': port}));
+    if (!accepting || peers.length >= maxPeers || _udp == null) return;
+    final data = utf8.encode(jsonEncode({
+      'magic': kMagic,
+      'v': kProtocolVersion,
+      'name': roomName,
+      'port': port,
+      'free': maxPeers - peers.length,
+    }));
     for (final target in NetUtil.broadcastTargets(ips)) {
       try {
         _udp!.send(data, target, kDiscoveryPort);
@@ -197,18 +213,26 @@ class LanHost {
     }
   }
 
-  void send(Map<String, dynamic> msg) => conn?.send(msg);
+  void send(LanPeer peer, Map<String, dynamic> msg) => peer.conn.send(msg);
 
-  void kick() {
-    conn?.close();
-    conn = null;
+  void broadcast(Map<String, dynamic> msg) {
+    for (final p in List.of(peers)) {
+      p.conn.send(msg);
+    }
+  }
+
+  void kick(LanPeer peer) {
+    peers.remove(peer);
+    peer.conn.close();
   }
 
   Future<void> stop() async {
     _beaconTimer?.cancel();
     _beaconTimer = null;
-    conn?.close();
-    conn = null;
+    for (final p in List.of(peers)) {
+      p.conn.close();
+    }
+    peers.clear();
     _udp?.close();
     _udp = null;
     await _server?.close();

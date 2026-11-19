@@ -36,8 +36,9 @@ class _FloatingJoystickState extends State<FloatingJoystick> {
       x = 0;
       y = 0;
     } else {
-      // rescale so movement starts smoothly after the dead zone
-      final k = ((m - 0.12) / 0.88) / m;
+      // rescale so movement starts smoothly after the dead zone and
+      // reaches full speed at 60% of the way out
+      final k = ((m - 0.12) / 0.48).clamp(0.0, 1.0) / m;
       x *= k;
       y *= k;
     }
@@ -128,45 +129,190 @@ class _JoyPainter extends CustomPainter {
       old.origin != origin || old.knob != knob || old.active != active;
 }
 
+/// POWER / SOFT / HIGH buttons plus the SPECIAL gauge button.
 class ShotButtons extends StatelessWidget {
   final void Function(ShotKind kind) onShot;
+  final VoidCallback onSpecial;
   final bool serving;
   final bool mirrored;
+  final double meter; // 0..1 special charge
+  final bool specialArmed;
+  final Color specialColor;
+  final String specialName;
 
-  const ShotButtons({super.key, required this.onShot, this.serving = false, this.mirrored = false});
+  const ShotButtons({
+    super.key,
+    required this.onShot,
+    required this.onSpecial,
+    this.serving = false,
+    this.mirrored = false,
+    this.meter = 0,
+    this.specialArmed = false,
+    this.specialColor = AppColors.orange,
+    this.specialName = 'SPECIAL',
+  });
 
   @override
   Widget build(BuildContext context) {
-    final drive = _ShotButton(
-        label: serving ? 'POWER\nSERVE' : 'DRIVE',
+    final power = _ShotButton(
+        label: serving ? 'POWER\nSERVE' : 'POWER',
         icon: Icons.flash_on_rounded,
         colors: const [AppColors.orange, Color(0xFFFF4D4D)],
-        size: 92,
+        size: 84,
         onTap: () => onShot(ShotKind.drive));
-    final dink = _ShotButton(
-        label: serving ? 'SOFT\nSERVE' : 'DINK',
+    final soft = _ShotButton(
+        label: serving ? 'SOFT\nSERVE' : 'SOFT',
         icon: Icons.water_drop_rounded,
         colors: const [AppColors.lime, Color(0xFF7BE35A)],
-        size: 74,
+        size: 70,
         onTap: () => onShot(ShotKind.soft));
-    final lob = _ShotButton(
-        label: serving ? 'LOB\nSERVE' : 'LOB',
+    final high = _ShotButton(
+        label: serving ? 'HIGH\nSERVE' : 'HIGH',
         icon: Icons.north_east_rounded,
         colors: const [AppColors.blue, AppColors.purple],
-        size: 66,
+        size: 62,
         onTap: () => onShot(ShotKind.lob));
+    final special = SpecialButton(
+      meter: meter,
+      armed: specialArmed,
+      color: specialColor,
+      name: specialName,
+      onTap: onSpecial,
+      enabled: !serving,
+    );
+    double? l(double v) => mirrored ? v : null;
+    double? r(double v) => mirrored ? null : v;
     return SizedBox(
-      width: 200,
-      height: 190,
+      width: 230,
+      height: 200,
       child: Stack(
+        clipBehavior: Clip.none,
         children: [
-          Positioned(right: mirrored ? null : 8, left: mirrored ? 8 : null, bottom: 14, child: drive),
-          Positioned(right: mirrored ? null : 108, left: mirrored ? 108 : null, bottom: 6, child: dink),
-          Positioned(right: mirrored ? null : 40, left: mirrored ? 40 : null, bottom: 112, child: lob),
+          Positioned(right: r(6), left: l(6), bottom: 8, child: power),
+          Positioned(right: r(98), left: l(98), bottom: 2, child: soft),
+          Positioned(right: r(36), left: l(36), bottom: 102, child: high),
+          Positioned(right: r(128), left: l(128), bottom: 86, child: special),
         ],
       ),
     );
   }
+}
+
+/// Round button whose ring fills up as the special meter charges.
+class SpecialButton extends StatefulWidget {
+  final double meter;
+  final bool armed;
+  final bool enabled;
+  final Color color;
+  final String name;
+  final VoidCallback onTap;
+  final double size;
+
+  const SpecialButton({
+    super.key,
+    required this.meter,
+    required this.armed,
+    required this.color,
+    required this.name,
+    required this.onTap,
+    this.enabled = true,
+    this.size = 76,
+  });
+
+  @override
+  State<SpecialButton> createState() => _SpecialButtonState();
+}
+
+class _SpecialButtonState extends State<SpecialButton> with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 700))..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ready = widget.meter >= 1;
+    final s = widget.size;
+    return Listener(
+      onPointerDown: (_) {
+        if (ready && widget.enabled) widget.onTap();
+      },
+      child: AnimatedBuilder(
+        animation: _pulse,
+        builder: (context, _) {
+          final glow = ready ? 0.4 + 0.6 * _pulse.value : 0.0;
+          return SizedBox(
+            width: s,
+            height: s,
+            child: CustomPaint(
+              painter: _GaugePainter(widget.meter.clamp(0.0, 1.0), widget.color, glow, widget.armed),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(widget.armed ? Icons.local_fire_department_rounded : Icons.auto_awesome_rounded,
+                        color: ready ? Colors.white : Colors.white54, size: s * 0.3),
+                    Text(
+                      widget.armed ? 'ARMED!' : (ready ? 'SPECIAL' : '${(widget.meter * 100).floor()}%'),
+                      style: TextStyle(
+                          color: ready ? Colors.white : Colors.white60,
+                          fontWeight: FontWeight.w900,
+                          fontSize: s * 0.13),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _GaugePainter extends CustomPainter {
+  final double value, glow;
+  final Color color;
+  final bool armed;
+  _GaugePainter(this.value, this.color, this.glow, this.armed);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    final r = size.shortestSide / 2 - 4;
+    if (glow > 0) {
+      canvas.drawCircle(c, r + 8, Paint()..shader = RadialGradient(colors: [
+            color.withValues(alpha: 0.7 * glow),
+            color.withValues(alpha: 0),
+          ]).createShader(Rect.fromCircle(center: c, radius: r + 10)));
+    }
+    canvas.drawCircle(c, r, Paint()..color = (armed ? color : const Color(0xCC0B1730)));
+    canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 5
+          ..color = Colors.white24);
+    canvas.drawArc(
+        Rect.fromCircle(center: c, radius: r),
+        -math.pi / 2,
+        math.pi * 2 * value,
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 5
+          ..strokeCap = StrokeCap.round
+          ..color = value >= 1 ? Color.lerp(color, Colors.white, 0.3 * glow)! : color);
+  }
+
+  @override
+  bool shouldRepaint(covariant _GaugePainter old) =>
+      old.value != value || old.glow != glow || old.armed != armed || old.color != color;
 }
 
 class _ShotButton extends StatefulWidget {

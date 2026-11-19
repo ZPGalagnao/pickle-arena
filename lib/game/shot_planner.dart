@@ -8,9 +8,9 @@ enum ShotKind { drive, soft, lob }
 
 extension ShotKindLabel on ShotKind {
   String get label => switch (this) {
-        ShotKind.drive => 'DRIVE',
-        ShotKind.soft => 'DINK',
-        ShotKind.lob => 'LOB',
+        ShotKind.drive => 'POWER',
+        ShotKind.soft => 'SOFT',
+        ShotKind.lob => 'HIGH',
       };
 }
 

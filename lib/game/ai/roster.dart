@@ -19,6 +19,7 @@ final List<AiOpponent> aiRoster = [
           jersey: 0xFFFF7A3D, shorts: 0xFF37474F, shoes: 0xFFFFFFFF, paddle: 0xFF2D9CDB,
           skin: 0xFFE0AC69, hair: 0xFF1B1B1B, number: 3, accessory: Accessory.cap),
       stats: PlayerStats(speed: 4, power: 4, control: 4),
+      special: SpecialSkill.tornadoLob,
     ),
     AiDifficulty.easy,
     AiStyle.balanced,
@@ -33,6 +34,7 @@ final List<AiOpponent> aiRoster = [
           skin: 0xFFF1C27D, hair: 0xFF4E342E, number: 12, pattern: PaddlePattern.dots,
           accessory: Accessory.visor),
       stats: PlayerStats(speed: 3, power: 3, control: 6),
+      special: SpecialSkill.phantomDrop,
     ),
     AiDifficulty.medium,
     AiStyle(0.8, 1.4, 1.0),
@@ -47,6 +49,7 @@ final List<AiOpponent> aiRoster = [
           skin: 0xFFC68642, hair: 0xFF1B1B1B, number: 99, pattern: PaddlePattern.flame,
           accessory: Accessory.headband),
       stats: PlayerStats(speed: 3, power: 6, control: 3),
+      special: SpecialSkill.fireSmash,
     ),
     AiDifficulty.hard,
     AiStyle(1.6, 0.7, 0.6),
@@ -61,6 +64,7 @@ final List<AiOpponent> aiRoster = [
           skin: 0xFF8D5524, hair: 0xFF1B1B1B, number: 7, pattern: PaddlePattern.stripes,
           accessory: Accessory.crown),
       stats: PlayerStats(speed: 5, power: 2, control: 5),
+      special: SpecialSkill.iceFreeze,
     ),
     AiDifficulty.hard,
     AiStyle(0.7, 1.7, 0.9),
@@ -75,6 +79,7 @@ final List<AiOpponent> aiRoster = [
           skin: 0xFFFFE0BD, hair: 0xFFE6C27A, number: 1, pattern: PaddlePattern.stripes,
           accessory: Accessory.shades),
       stats: PlayerStats(speed: 5, power: 4, control: 3),
+      special: SpecialSkill.thunderCurve,
     ),
     AiDifficulty.pro,
     AiStyle.balanced,
@@ -82,3 +87,6 @@ final List<AiOpponent> aiRoster = [
     'Complete player',
   ),
 ];
+
+/// In doubles, each opponent brings a teammate of a similar level.
+AiOpponent doublesPartnerOf(int index) => aiRoster[const [1, 0, 3, 2, 3][index]];
