@@ -408,7 +408,7 @@ class ClientSession extends GameSession {
   void update(double dt, PlayerInput local) {
     final slow = _state.slowmo > 0 ? GameEngine.slowmoScale : 1.0;
     if (_state.slowmo > 0) _state.slowmo = math.max(0, _state.slowmo - dt);
-    final g = math.min(dt, 0.05) * config.gameSpeed * slow;
+    final g = math.min(dt, 0.1) * config.gameSpeed * slow;
     _sendTimer += dt;
     if (local.shot != null || local.special || _sendTimer >= 1 / 30) {
       _sendTimer = 0;

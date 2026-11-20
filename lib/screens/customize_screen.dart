@@ -1,4 +1,5 @@
-import 'package:flutter/services.dart';
+import 'dart:typed_data';
+
 import 'package:image_picker/image_picker.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -59,29 +60,10 @@ class _CustomizeScreenState extends State<CustomizeScreen> with SingleTickerProv
   }
 
   Future<void> _editNumber() async {
-    final ctrl = TextEditingController(text: '${_p.look.number}');
     final result = await showDialog<int>(
       context: context,
-      builder: (c) => AlertDialog(
-        backgroundColor: AppColors.card,
-        title: const Text('Jersey number'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          keyboardType: TextInputType.number,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(2)],
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w900),
-          decoration: const InputDecoration(hintText: '0 - 99'),
-          onSubmitted: (v) => Navigator.pop(c, int.tryParse(v)),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(c), child: const Text('CANCEL')),
-          FilledButton(onPressed: () => Navigator.pop(c, int.tryParse(ctrl.text)), child: const Text('OK')),
-        ],
-      ),
+      builder: (c) => _NumberPad(initial: _p.look.number, color: Color(_p.look.jersey)),
     );
-    ctrl.dispose();
     if (result != null) _edit(() => _p.look.number = result.clamp(0, 99));
   }
 
@@ -493,5 +475,117 @@ class _CustomizeScreenState extends State<CustomizeScreen> with SingleTickerProv
       row('CONTROL', 'More accurate, fewer outs and net balls', Icons.gps_fixed_rounded, AppColors.mint, st.control,
           (v) => st.control = v),
     ]);
+  }
+}
+
+/// Landscape-friendly number pad for the jersey number (no system keyboard).
+class _NumberPad extends StatefulWidget {
+  final int initial;
+  final Color color;
+  const _NumberPad({required this.initial, required this.color});
+
+  @override
+  State<_NumberPad> createState() => _NumberPadState();
+}
+
+class _NumberPadState extends State<_NumberPad> {
+  late String _text = '${widget.initial}';
+  bool _fresh = true; // first key press replaces the old number
+
+  void _key(String k) {
+    setState(() {
+      if (k == '<') {
+        _text = _text.length <= 1 ? '0' : _text.substring(0, _text.length - 1);
+      } else if (_fresh || _text == '0') {
+        _text = k;
+      } else if (_text.length < 2) {
+        _text += k;
+      }
+      _fresh = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget key(String k) => Padding(
+          padding: const EdgeInsets.all(4),
+          child: PressScale(
+            onTap: () => _key(k),
+            child: Container(
+              width: 62,
+              height: 48,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(color: const Color(0x22FFFFFF), borderRadius: BorderRadius.circular(14)),
+              child: k == '<'
+                  ? const Icon(Icons.backspace_rounded, size: 22)
+                  : Text(k, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+            ),
+          ),
+        );
+    return Dialog(
+      backgroundColor: AppColors.card,
+      insetPadding: const EdgeInsets.all(16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // big preview of the number on a jersey-colored badge
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('JERSEY NUMBER',
+                    style: TextStyle(color: AppColors.muted, fontWeight: FontWeight.w900, letterSpacing: 1.4, fontSize: 12)),
+                const SizedBox(height: 8),
+                Container(
+                  width: 120,
+                  height: 120,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: widget.color,
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(color: Colors.white, width: 3),
+                  ),
+                  child: Text(_text,
+                      style: TextStyle(
+                          fontSize: 54,
+                          fontWeight: FontWeight.w900,
+                          color: widget.color.computeLuminance() > 0.55 ? const Color(0xFF111111) : Colors.white)),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCEL')),
+                    const SizedBox(width: 6),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(context, int.tryParse(_text) ?? 0),
+                      style: FilledButton.styleFrom(backgroundColor: AppColors.lime, foregroundColor: AppColors.bg),
+                      child: const Text('OK', style: TextStyle(fontWeight: FontWeight.w900)),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(width: 16),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final row in const [
+                  ['1', '2', '3'],
+                  ['4', '5', '6'],
+                  ['7', '8', '9'],
+                  ['', '0', '<'],
+                ])
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [for (final k in row) k.isEmpty ? const SizedBox(width: 70, height: 56) : key(k)],
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

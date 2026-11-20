@@ -110,7 +110,7 @@ class GameEngine {
     for (var i = 0; i < n; i++) {
       _applyButtons(i, inputs[i]);
     }
-    final real = math.min(frameDt, 0.05);
+    final real = math.min(frameDt, 0.1); // follow real time even at low FPS
     var scale = config.gameSpeed;
     if (s.slowmo > 0) {
       scale *= slowmoScale;
@@ -224,7 +224,7 @@ class GameEngine {
     }
     final tvx = locked ? 0.0 : dx * speed;
     final tvy = locked ? 0.0 : dy * speed;
-    const accel = 30.0;
+    const accel = 46.0; // snappy starts and stops
     var ax = tvx - p.vx, ay = tvy - p.vy;
     final am = math.sqrt(ax * ax + ay * ay);
     final maxDv = accel * dt;

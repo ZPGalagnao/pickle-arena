@@ -112,7 +112,7 @@ class GameState {
   double markerX = 0, markerY = 0;
   double slowmo = 0; // real seconds of slow motion left
   int specialPlayer = -1; // who fired the last special (for the banner)
-  double specialTime = 0; // seconds since that special
+  double specialTime = 99; // seconds since that special
   final List<MatchStats> stats;
   final List<GameEvent> recentEvents = [];
 

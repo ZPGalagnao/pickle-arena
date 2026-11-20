@@ -8,55 +8,112 @@ import 'models/profile.dart';
 enum ControlMode { joystick, tilt }
 
 class GameSettings {
+  // controls
   ControlMode control;
   bool autoHit; // swing automatically when the ball is in reach
-  bool showMarker; // show where the incoming ball will land
-  double gameSpeed;
-  bool haptics;
-  bool leftHanded; // joystick on the right, buttons on the left
-  bool showAiThoughts;
   bool moveAssist; // slide toward the ball when the joystick is idle
+  bool showMarker; // show where the incoming ball will land
+  bool leftHanded; // joystick on the right, buttons on the left
+  bool fixedJoystick; // joystick stays in one place instead of following the thumb
+  double joystickSize; // 0.8 .. 1.4
+  double buttonSize; // 0.8 .. 1.3
+  double sensitivity; // 0..1: how little you push to reach full speed
+  bool haptics;
+  // gameplay
+  double gameSpeed;
+  bool showAiThoughts;
+  // audio (0..1)
   bool sound;
   bool music;
+  bool announcer;
+  double masterVolume;
+  double musicVolume;
+  double sfxVolume;
+  double crowdVolume;
+  // graphics
+  int graphics; // 0 = low, 1 = medium, 2 = high
+  bool screenShake;
+  bool showFps;
 
   GameSettings({
     this.control = ControlMode.joystick,
     this.autoHit = true,
-    this.showMarker = true,
-    this.gameSpeed = 0.9,
-    this.haptics = true,
-    this.leftHanded = false,
-    this.showAiThoughts = false,
     this.moveAssist = true,
+    this.showMarker = true,
+    this.leftHanded = false,
+    this.fixedJoystick = false,
+    this.joystickSize = 1.0,
+    this.buttonSize = 1.0,
+    this.sensitivity = 0.6,
+    this.haptics = true,
+    this.gameSpeed = 1.0,
+    this.showAiThoughts = false,
     this.sound = true,
     this.music = true,
+    this.announcer = true,
+    this.masterVolume = 0.9,
+    this.musicVolume = 0.45,
+    this.sfxVolume = 1.0,
+    this.crowdVolume = 0.35,
+    this.graphics = 1,
+    this.screenShake = true,
+    this.showFps = false,
   });
 
   Map<String, dynamic> toJson() => {
         'control': control.index,
         'autoHit': autoHit,
-        'showMarker': showMarker,
-        'gameSpeed': gameSpeed,
-        'haptics': haptics,
-        'leftHanded': leftHanded,
-        'showAiThoughts': showAiThoughts,
         'moveAssist': moveAssist,
+        'showMarker': showMarker,
+        'leftHanded': leftHanded,
+        'fixedJoystick': fixedJoystick,
+        'joystickSize': joystickSize,
+        'buttonSize': buttonSize,
+        'sensitivity': sensitivity,
+        'haptics': haptics,
+        'gameSpeed': gameSpeed,
+        'showAiThoughts': showAiThoughts,
         'sound': sound,
         'music': music,
+        'announcer': announcer,
+        'masterVolume': masterVolume,
+        'musicVolume': musicVolume,
+        'sfxVolume': sfxVolume,
+        'crowdVolume': crowdVolume,
+        'graphics': graphics,
+        'screenShake': screenShake,
+        'showFps': showFps,
+        'v': 2,
       };
 
-  factory GameSettings.fromJson(Map<String, dynamic> j) => GameSettings(
-        control: ControlMode.values[((j['control'] as int?) ?? 0).clamp(0, 1)],
-        autoHit: j['autoHit'] as bool? ?? true,
-        showMarker: j['showMarker'] as bool? ?? true,
-        gameSpeed: (j['gameSpeed'] as num?)?.toDouble() ?? 0.9,
-        haptics: j['haptics'] as bool? ?? true,
-        leftHanded: j['leftHanded'] as bool? ?? false,
-        showAiThoughts: j['showAiThoughts'] as bool? ?? false,
-        moveAssist: j['moveAssist'] as bool? ?? true,
-        sound: j['sound'] as bool? ?? true,
-        music: j['music'] as bool? ?? true,
-      );
+  factory GameSettings.fromJson(Map<String, dynamic> j) {
+    double d(String k, double def, double lo, double hi) => ((j[k] as num?)?.toDouble() ?? def).clamp(lo, hi);
+    final old = j['v'] == null; // settings saved by v1.0/1.1
+    return GameSettings(
+      control: ControlMode.values[((j['control'] as int?) ?? 0).clamp(0, 1)],
+      autoHit: j['autoHit'] as bool? ?? true,
+      moveAssist: j['moveAssist'] as bool? ?? true,
+      showMarker: j['showMarker'] as bool? ?? true,
+      leftHanded: j['leftHanded'] as bool? ?? false,
+      fixedJoystick: j['fixedJoystick'] as bool? ?? false,
+      joystickSize: d('joystickSize', 1.0, 0.8, 1.4),
+      buttonSize: d('buttonSize', 1.0, 0.8, 1.3),
+      sensitivity: d('sensitivity', 0.6, 0.0, 1.0),
+      haptics: j['haptics'] as bool? ?? true,
+      gameSpeed: old ? 1.0 : d('gameSpeed', 1.0, 0.7, 1.2),
+      showAiThoughts: j['showAiThoughts'] as bool? ?? false,
+      sound: j['sound'] as bool? ?? true,
+      music: j['music'] as bool? ?? true,
+      announcer: j['announcer'] as bool? ?? true,
+      masterVolume: d('masterVolume', 0.9, 0, 1),
+      musicVolume: d('musicVolume', 0.45, 0, 1),
+      sfxVolume: d('sfxVolume', 1.0, 0, 1),
+      crowdVolume: d('crowdVolume', 0.35, 0, 1),
+      graphics: ((j['graphics'] as int?) ?? 1).clamp(0, 2),
+      screenShake: j['screenShake'] as bool? ?? true,
+      showFps: j['showFps'] as bool? ?? false,
+    );
+  }
 }
 
 /// App-wide state: the player's profile, settings and match record.

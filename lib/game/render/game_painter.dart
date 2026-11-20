@@ -22,9 +22,10 @@ class GameScene {
   bool showMarker;
   double time = 0;
   double topInset;
-  double bottomInset;
-  double sideInset;
   double victoryTime = 0; // seconds since game over (camera push-in)
+  double dpr; // device pixel ratio for crisp cached layers
+  int quality; // 0 = low, 1 = medium, 2 = high
+  bool screenShake;
 
   GameScene({
     required this.state,
@@ -34,9 +35,10 @@ class GameScene {
     required this.fx,
     this.localIndex = 0,
     this.showMarker = true,
-    this.topInset = 46,
-    this.bottomInset = 6,
-    this.sideInset = 6,
+    this.topInset = 24,
+    this.dpr = 2,
+    this.quality = 2,
+    this.screenShake = true,
   });
 }
 
@@ -46,17 +48,64 @@ class GamePainter extends CustomPainter {
 
   GamePainter(this.scene, {super.repaint});
 
+  // ---- cached layers (shared: one game screen at a time) -----------------
+  static ui.Image? _static;
+  static ui.Image? _net;
+  static Rect _netRect = Rect.zero;
+  static Object? _cacheKey;
+  static final Map<String, TextPainter> _tags = {};
+
+  void _ensureLayers(Size size) {
+    final v = scene.view;
+    final key = Object.hash(v.layoutKey, scene.dpr, scene.quality);
+    if (key == _cacheKey && _static != null) return;
+    _cacheKey = key;
+    _static?.dispose();
+    _net?.dispose();
+    final dpr = scene.dpr;
+    // stadium + court (+ a still crowd on low quality)
+    var rec = ui.PictureRecorder();
+    var c = Canvas(rec);
+    c.scale(dpr);
+    CourtPainter.paintStatic(c, size, v);
+    if (scene.quality == 0) CourtPainter.paintCrowd(c, v, 0, 0.15, density: 0.6);
+    var pic = rec.endRecording();
+    _static = pic.toImageSync((size.width * dpr).ceil(), (size.height * dpr).ceil());
+    pic.dispose();
+    // net (only its bounding box)
+    _netRect = CourtPainter.netBounds(v);
+    rec = ui.PictureRecorder();
+    c = Canvas(rec);
+    c.scale(dpr);
+    c.translate(-_netRect.left, -_netRect.top);
+    CourtPainter.paintNet(c, v);
+    pic = rec.endRecording();
+    _net = pic.toImageSync((_netRect.width * dpr).ceil(), (_netRect.height * dpr).ceil());
+    pic.dispose();
+  }
+
+  void _drawLayer(Canvas canvas, ui.Image img, Rect dst) {
+    canvas.drawImageRect(img, Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()), dst,
+        Paint()..filterQuality = FilterQuality.medium);
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     final v = scene.view;
     final s = scene.state;
-    v.layout(size, top: scene.topInset, bottom: scene.bottomInset, side: scene.sideInset);
+    v.layout(size, top: scene.topInset);
+    _ensureLayers(size);
     _updateCamera(s);
     canvas.save();
-    final sh = scene.fx.shakeOffset();
-    canvas.translate(sh.dx, sh.dy);
-    CourtPainter.paintBackground(canvas, size, v, scene.time, excitement: scene.fx.excitement);
-    CourtPainter.paintCourt(canvas, v);
+    if (scene.screenShake) {
+      final sh = scene.fx.shakeOffset();
+      canvas.translate(sh.dx, sh.dy);
+    }
+    v.applyZoom(canvas);
+    _drawLayer(canvas, _static!, Offset.zero & size);
+    if (scene.quality > 0) {
+      CourtPainter.paintCrowd(canvas, v, scene.time, scene.fx.excitement, density: scene.quality == 1 ? 0.55 : 1.0);
+    }
 
     final li = scene.localIndex;
     if (li >= 0 && s.phase != Phase.gameOver) _paintHints(canvas, v, s, li);
@@ -71,23 +120,28 @@ class GamePainter extends CustomPainter {
     canvas.drawOval(Rect.fromCenter(center: shadowC, width: sr * 2.2, height: sr * 1.2),
         Paint()..color = Color.fromRGBO(0, 0, 0, (0.45 - b.z * 0.08).clamp(0.12, 0.45) * ghost));
 
-    // painter's algorithm: far objects first, net in the middle
-    final items = <(double, void Function())>[];
-    for (var i = 0; i < s.players.length; i++) {
-      final p = s.players[i];
-      items.add((v.depthKey(p.y), () => _paintPlayer(canvas, v, i)));
-    }
-    items.add((v.depthKey(b.y) - 0.01, () => _paintBall(canvas, v, ghost)));
-    items.sort((a, b2) => b2.$1.compareTo(a.$1));
-    var netDrawn = false;
-    for (final it in items) {
-      if (!netDrawn && it.$1 < 0) {
-        CourtPainter.paintNet(canvas, v);
-        netDrawn = true;
+    // painter's algorithm: farthest first; the net sits at depth 0
+    const ballId = -1, netId = -2;
+    final items = <(double, int)>[
+      for (var i = 0; i < s.players.length; i++) (v.depthKey(s.players[i].y), i),
+      (v.depthKey(b.y) - 0.01, ballId),
+      (0.0, netId),
+    ]..sort((a, c) => c.$1.compareTo(a.$1));
+    for (final (_, id) in items) {
+      if (id == netId) {
+        _drawLayer(canvas, _net!, _netRect);
+      } else if (id == ballId) {
+        _paintBall(canvas, v, ghost);
+      } else {
+        _paintPlayer(canvas, v, id);
       }
-      it.$2();
     }
-    if (!netDrawn) CourtPainter.paintNet(canvas, v);
+    // name tags + meters on top of everything (never hidden by the net or another player)
+    if (!(s.phase == Phase.gameOver && s.winner >= 0)) {
+      for (var i = 0; i < s.players.length; i++) {
+        _paintTag(canvas, v, i);
+      }
+    }
     scene.fx.paintParticles(canvas, v);
     canvas.restore();
     scene.fx.paintScreen(canvas, size, slowmo: s.phase == Phase.gameOver ? 0 : s.slowmo);
@@ -104,11 +158,10 @@ class GamePainter extends CustomPainter {
         fy += p.y;
       }
       final k = Curves.easeInOut.transform((scene.victoryTime / 1.6).clamp(0.0, 1.0));
-      // frame the celebrating winners, with the sad losers still in view
       v.focusX = fx / winners.length * 0.7;
       v.focusY = fy / winners.length * 0.55;
       v.focusZ = 1.2;
-      v.zoom = 1 + 0.55 * k;
+      v.zoom = 1 + 0.45 * k;
     } else {
       v.zoom = 1;
     }
@@ -119,16 +172,13 @@ class GamePainter extends CustomPainter {
     if (s.ball.fx != BallFx.phantom || s.phase != Phase.rally || s.ball.fxBounces > 0) return 1;
     final hitter = s.lastHitter < 0 ? null : s.players[s.lastHitter];
     if (hitter == null) return 1;
-    final travelled = (s.ball.y * hitter.side).clamp(-8.0, 0.0); // 0 at the net, negative on hitter side
-    final pastNet = s.ball.y * hitter.side < 0;
-    if (pastNet) return 0.12;
-    return (0.12 + 0.88 * (-travelled / 4).clamp(0.0, 1.0));
+    if (s.ball.y * hitter.side < 0) return 0.12;
+    return 0.12 + 0.88 * ((s.ball.y * hitter.side).abs() / 4).clamp(0.0, 1.0);
   }
 
   void _paintHints(Canvas canvas, CourtView v, GameState s, int li) {
     final me = s.players[li];
     final incoming = s.phase == Phase.rally && s.lastHitter >= 0 && s.hittingTeam != me.team;
-    // kitchen warning: standing in the kitchen while a volley is coming
     if (incoming && me.y.abs() < Court.kitchen && s.bouncesOnReceiver == 0 && !s.mustBounce) {
       final y0 = me.side * Court.kitchen;
       final a = v.project(-Court.halfW, 0, 0), bb = v.project(Court.halfW, 0, 0);
@@ -143,33 +193,52 @@ class GamePainter extends CustomPainter {
             ..close(),
           Paint()..color = Color.fromRGBO(255, 60, 60, pulse));
     }
-    // predicted landing spot
     if (scene.showMarker && incoming && s.hasMarker) {
       final c = v.project(s.markerX, s.markerY, 0);
       final ppm = v.pxPerMeter(s.markerX, s.markerY, 0);
       final r = (0.28 + 0.05 * math.sin(scene.time * 8)) * ppm;
       final inside = Court.inCourt(s.markerX, s.markerY, me.side);
       final col = inside ? const Color(0xFFD4F33A) : const Color(0xFFFF5252);
-      canvas.drawOval(Rect.fromCenter(center: c, width: r * 2, height: r * 1.15),
+      canvas.drawOval(Rect.fromCenter(center: c, width: r * 2, height: r * 0.9),
           Paint()
             ..style = PaintingStyle.stroke
-            ..strokeWidth = 2.2
+            ..strokeWidth = 2.5
             ..color = col.withValues(alpha: 0.85));
-      canvas.drawOval(Rect.fromCenter(center: c, width: r * 0.6, height: r * 0.35),
+      canvas.drawOval(Rect.fromCenter(center: c, width: r * 0.6, height: r * 0.27),
           Paint()..color = col.withValues(alpha: 0.5));
     }
-    // ring under the local player (brightens when the ball is in reach)
     final feet = v.project(me.x, me.y, 0);
     final ppm = v.pxPerMeter(me.x, me.y, 0);
     final b = s.ball;
     final dist = math.sqrt((b.x - me.x) * (b.x - me.x) + (b.y - me.y) * (b.y - me.y));
     final hot = incoming && dist < 1.05 && b.z < 2.35;
     canvas.drawOval(
-        Rect.fromCenter(center: feet, width: 2.1 * ppm, height: 1.05 * ppm),
+        Rect.fromCenter(center: feet, width: 2.1 * ppm, height: 0.8 * ppm),
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = hot ? 3.5 : 2
-          ..color = (hot ? const Color(0xFFD4F33A) : Colors.white).withValues(alpha: hot ? 0.95 : 0.35));
+          ..strokeWidth = hot ? 4 : 2.2
+          ..color = (hot ? const Color(0xFFD4F33A) : Colors.white).withValues(alpha: hot ? 0.95 : 0.4));
+  }
+
+  TextPainter _tag(String name, double size, bool mine) {
+    final px = size.round().clamp(9, 30);
+    final key = '$name|$px|$mine';
+    return _tags.putIfAbsent(key, () {
+      if (_tags.length > 64) _tags.clear();
+      return TextPainter(
+        text: TextSpan(
+          text: name,
+          style: TextStyle(
+            color: mine ? const Color(0xFFD4F33A) : Colors.white,
+            fontFamily: 'Roboto',
+            fontSize: px.toDouble(),
+            fontWeight: FontWeight.w800,
+            shadows: const [Shadow(color: Colors.black, blurRadius: 4)],
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+    });
   }
 
   void _paintPlayer(Canvas canvas, CourtView v, int i) {
@@ -201,44 +270,37 @@ class GamePainter extends CustomPainter {
       auraStrength: p.specialArmed ? 1.0 : 0.45,
       frozen: p.frozen > 0 && pose == 0,
     );
-    if (pose != 0) return; // no name tags during the victory scene
-    // name tag + special meter
-    final tp = TextPainter(
-      text: TextSpan(
-        text: prof.name,
-        style: TextStyle(
-          color: i == scene.localIndex ? const Color(0xFFD4F33A) : Colors.white,
-          fontFamily: 'Roboto',
-          fontSize: math.max(9.0, ppm * 0.3),
-          fontWeight: FontWeight.w800,
-          shadows: const [Shadow(color: Colors.black, blurRadius: 4)],
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    final hop = pose == 1 ? math.sin((scene.time + i * 1.7) * 7).abs() * 0.32 * ppm * CharacterPainter.visualScale : 0;
-    final tagY = feet.dy - hop - ppm * CharacterPainter.visualScale * 2.42 - tp.height - 5;
+  }
+
+  void _paintTag(Canvas canvas, CourtView v, int i) {
+    final p = scene.state.players[i];
+    final prof = scene.profiles[i];
+    final feet = v.project(p.x, p.y, 0);
+    final ppm = v.pxPerMeter(p.x, p.y, 0);
+    final backView = v.depthKey(p.y) < 0;
+    final skillColor = Color(prof.special.color);
+    final tp = _tag(prof.name, math.max(9.0, ppm * 0.26), i == scene.localIndex);
+    // far-side players get their tag under their feet so it never runs into the top HUD
+    final tagY = backView ? feet.dy - ppm * CharacterPainter.visualScale * 2.42 - tp.height - 6 : feet.dy + 3;
     tp.paint(canvas, Offset(feet.dx - tp.width / 2, tagY));
-    if (pose == 0) {
-      final w = math.max(26.0, ppm * 0.9), h = math.max(3.0, ppm * 0.07);
-      final bar = Rect.fromLTWH(feet.dx - w / 2, tagY + tp.height + 1, w, h);
-      canvas.drawRRect(RRect.fromRectAndRadius(bar, Radius.circular(h)), Paint()..color = const Color(0x99000000));
-      final ready = p.meter >= 1;
-      final fill = Rect.fromLTWH(bar.left, bar.top, w * p.meter.clamp(0.0, 1.0), h);
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(fill, Radius.circular(h)),
-          Paint()
-            ..color = ready
-                ? Color.lerp(skillColor, Colors.white, 0.4 + 0.4 * math.sin(scene.time * 10))!
-                : skillColor.withValues(alpha: 0.85));
-    }
+    final w = math.max(26.0, ppm * 0.9), h = math.max(3.0, ppm * 0.07);
+    final bar = Rect.fromLTWH(feet.dx - w / 2, tagY + tp.height + 1, w, h);
+    canvas.drawRRect(RRect.fromRectAndRadius(bar, Radius.circular(h)), Paint()..color = const Color(0x99000000));
+    final ready = p.meter >= 1;
+    final fill = Rect.fromLTWH(bar.left, bar.top, w * p.meter.clamp(0.0, 1.0), h);
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(fill, Radius.circular(h)),
+        Paint()
+          ..color = ready
+              ? Color.lerp(skillColor, Colors.white, 0.4 + 0.4 * math.sin(scene.time * 10))!
+              : skillColor.withValues(alpha: 0.85));
   }
 
   void _paintBall(Canvas canvas, CourtView v, double alpha) {
     final b = scene.state.ball;
-    scene.fx.paintTrail(canvas, v, ballRadius, b.fx);
+    if (scene.quality > 0) scene.fx.paintTrail(canvas, v, ballRadius, b.fx);
     final c = v.project(b.x, b.y, b.z + ballRadius * 0.5);
-    final r = math.max(3.0, ballRadius * v.pxPerMeter(b.x, b.y, b.z));
+    final r = math.max(3.5, ballRadius * v.pxPerMeter(b.x, b.y, b.z));
     Effects.paintBall(canvas, c, r, fx: b.fx, alpha: alpha);
   }
 

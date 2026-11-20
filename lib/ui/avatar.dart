@@ -106,7 +106,12 @@ class _FacePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _FacePainter old) =>
-      old.img != img || old.look != look || old.look.toJson().toString() != look.toJson().toString();
+      old.img != img ||
+      old.look != look ||
+      old.look.skin != look.skin ||
+      old.look.hair != look.hair ||
+      old.look.jersey != look.jersey ||
+      old.look.accessory != look.accessory;
 }
 
 /// Full-body animated character preview (used in customization and lobby).

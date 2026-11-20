@@ -18,7 +18,7 @@ Built with Flutter (Android) and TensorFlow/Keras.
 
 **Tech:** Flutter / Dart (custom 2.5D renderer, no game engine) · TensorFlow / Keras · NumPy ·
 Google ML Kit face detection · UDP discovery + TCP sockets · Kotlin (Android multicast lock) ·
-procedurally synthesized audio
+audio processed with NumPy + libsndfile
 
 ## Features
 
@@ -35,11 +35,18 @@ procedurally synthesized audio
 - **Character customization** – your own face (selfie or gallery, auto-cropped with ML Kit face detection),
   jersey/shorts/shoe colors, paddle color and design, headwear, editable jersey number, skill points
   (Speed / Power / Control) and your special attack.
-- **Stadium atmosphere** – a crowd that jumps, waves and holds up signs; cheers, "aww"s and applause;
-  footsteps, paddle pops, special-attack sounds and two music loops, all synthesized in Python.
+- **Stadium atmosphere** – a crowd that jumps, waves and holds up signs; real crowd cheers, "aww"s and
+  applause, a match announcer ("Ace!", "Match point!", "Victory!"), paddle hits, footsteps,
+  special-attack sounds and licensed music (see [AUDIO_CREDITS.md](AUDIO_CREDITS.md)).
 - **Victory scene, ranking and XP** – the winners celebrate in slow motion while the losers hang their heads,
   then everyone is ranked (MVP) and you earn XP and level up (Rookie to Legend).
-- **Phone controls** – landscape; floating joystick with move assist, or tilt-to-move; haptics.
+- **Phone controls** – landscape; floating joystick that follows your thumb (or a fixed one), with
+  adjustable size and sensitivity, move assist, left-handed layout, or tilt-to-move; haptics.
+- **Settings** – volume for master / music / effects / crowd, announcer on/off, graphics quality
+  (Low / Medium / High), screen shake, FPS counter, button size, game speed.
+- **Smooth on mid-range phones** – the stadium is drawn once into a cached image, the whole crowd is
+  one GPU draw call, text and faces are cached, and the HUD only rebuilds when something changes.
+  Physics runs in fixed 1/120 s steps, so a slow frame never turns into slow motion.
 - Real pickleball rules: diagonal underhand serve, two-bounce rule, kitchen (non-volley zone), out / net /
   double-bounce faults, rally or traditional scoring, doubles side switching, second server and 0-0-2 start,
   win by 2.
@@ -68,8 +75,9 @@ pickle_arena/
 │  ├─ screens/                  home, customize, face crop, VS AI, lobby, game, settings, guide
 │  └─ ui/                       theme, joystick/buttons/tilt, avatars
 ├─ assets/ai/pickle_brain.json  trained weights (exported by training/train_ai.py)
-├─ assets/audio/                27 sounds + music (made by tools/make_sounds.py)
-├─ tools/make_sounds.py         synthesizes every sound effect and music loop with NumPy
+├─ assets/audio/                sound effects, crowd, announcer and music (OGG/WAV)
+├─ tools/make_sounds.py         synthesizes the special-attack, footstep, net and UI sounds with NumPy
+├─ tools/make_audio.py          trims, mixes and converts the CC0/CC-BY recordings to OGG
 ├─ training/
 │  ├─ pickle_sim.py             Python twin of the game physics
 │  ├─ train_ai.py               data generation + training + export
@@ -147,3 +155,10 @@ flutter test test/screenshot_capture.dart --dart-define=OUT=build/screens --dart
 
 The host phone runs the game engine and sends 30 snapshots per second; each joining phone sends its
 joystick/buttons and predicts its own movement so it feels instant.
+
+## Credits
+
+Music, crowd, announcer and paddle sounds come from OpenGameArt.org under CC0, CC-BY 3.0 and CC-BY 4.0:
+Matthew Pablo ("Shake and Bake"), Viktor Kraus ("Well oiled, shiny Oscillators"), Gregor Quendel
+(crowd cheering), Aimee Smith / WinterWalrus (announcer), Aj_, artisticdude and eXpl0it3r.
+Full list with links and licenses: [AUDIO_CREDITS.md](AUDIO_CREDITS.md).

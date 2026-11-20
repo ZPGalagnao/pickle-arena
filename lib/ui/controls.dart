@@ -7,13 +7,22 @@ import 'package:sensors_plus/sensors_plus.dart';
 import '../game/shot_planner.dart';
 import 'theme.dart';
 
-/// Floating joystick: touch anywhere in its area and drag.
+/// Joystick: touch anywhere in its area and drag. In floating mode it starts
+/// under your thumb and follows it if you drag past the edge.
 /// Reports (x, y) in -1..1, y > 0 = pushing up (toward the net).
 class FloatingJoystick extends StatefulWidget {
   final void Function(double x, double y) onChanged;
   final double radius;
+  final bool fixed;
+  final double fullSpeedAt; // fraction of the radius that gives full speed
 
-  const FloatingJoystick({super.key, required this.onChanged, this.radius = 58});
+  const FloatingJoystick({
+    super.key,
+    required this.onChanged,
+    this.radius = 62,
+    this.fixed = false,
+    this.fullSpeedAt = 0.55,
+  });
 
   @override
   State<FloatingJoystick> createState() => _FloatingJoystickState();
@@ -23,22 +32,30 @@ class _FloatingJoystickState extends State<FloatingJoystick> {
   Offset? _origin;
   Offset _knob = Offset.zero;
   int? _pointer;
+  Offset _rest = Offset.zero;
 
   void _update(Offset local) {
-    final o = _origin!;
+    var o = _origin!;
     var d = local - o;
     final r = widget.radius;
-    if (d.distance > r) d = d / d.distance * r;
+    if (d.distance > r) {
+      if (!widget.fixed) {
+        // drag the joystick along with the thumb
+        o = local - d / d.distance * r;
+        _origin = o;
+      }
+      d = d / d.distance * r;
+    }
     setState(() => _knob = d);
     var x = d.dx / r, y = -d.dy / r;
     final m = math.sqrt(x * x + y * y);
-    if (m < 0.12) {
+    const dead = 0.1;
+    if (m < dead) {
       x = 0;
       y = 0;
     } else {
-      // rescale so movement starts smoothly after the dead zone and
-      // reaches full speed at 60% of the way out
-      final k = ((m - 0.12) / 0.48).clamp(0.0, 1.0) / m;
+      // smooth ramp after the dead zone, full speed at [fullSpeedAt]
+      final k = ((m - dead) / (widget.fullSpeedAt - dead)).clamp(0.0, 1.0) / m;
       x *= k;
       y *= k;
     }
@@ -57,14 +74,14 @@ class _FloatingJoystickState extends State<FloatingJoystick> {
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, box) {
-      final rest = Offset(box.maxWidth / 2, box.maxHeight - widget.radius - 18);
-      final origin = _origin ?? rest;
+      _rest = Offset(widget.radius + 34, box.maxHeight - widget.radius - 26);
+      final origin = _origin ?? _rest;
       return Listener(
         behavior: HitTestBehavior.opaque,
         onPointerDown: (e) {
           if (_pointer != null) return;
           _pointer = e.pointer;
-          _origin = e.localPosition;
+          _origin = widget.fixed ? _rest : e.localPosition;
           _update(e.localPosition);
         },
         onPointerMove: (e) {
@@ -93,40 +110,47 @@ class _JoyPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawCircle(origin, r, Paint()..color = Colors.white.withValues(alpha: active ? 0.14 : 0.08));
+    canvas.drawCircle(origin, r, Paint()..color = Colors.black.withValues(alpha: active ? 0.28 : 0.18));
     canvas.drawCircle(
         origin,
         r,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 2
-          ..color = Colors.white.withValues(alpha: active ? 0.45 : 0.25));
-    final arrows = Paint()..color = Colors.white.withValues(alpha: 0.3);
+          ..strokeWidth = 2.5
+          ..color = Colors.white.withValues(alpha: active ? 0.6 : 0.3));
+    final arrows = Paint()..color = Colors.white.withValues(alpha: 0.35);
     for (var i = 0; i < 4; i++) {
       final a = i * math.pi / 2;
-      final c = origin + Offset(math.cos(a), math.sin(a)) * (r - 12);
+      final c = origin + Offset(math.cos(a), math.sin(a)) * (r - 13);
       final p = Path()
-        ..moveTo(c.dx + math.cos(a) * 6, c.dy + math.sin(a) * 6)
-        ..lineTo(c.dx + math.cos(a + 2.2) * 6, c.dy + math.sin(a + 2.2) * 6)
-        ..lineTo(c.dx + math.cos(a - 2.2) * 6, c.dy + math.sin(a - 2.2) * 6)
+        ..moveTo(c.dx + math.cos(a) * 7, c.dy + math.sin(a) * 7)
+        ..lineTo(c.dx + math.cos(a + 2.2) * 7, c.dy + math.sin(a + 2.2) * 7)
+        ..lineTo(c.dx + math.cos(a - 2.2) * 7, c.dy + math.sin(a - 2.2) * 7)
         ..close();
       canvas.drawPath(p, arrows);
     }
+    if (active && knob.distance > 4) {
+      // direction glow
+      canvas.drawLine(origin, origin + knob, Paint()
+        ..color = AppColors.lime.withValues(alpha: 0.35)
+        ..strokeWidth = r * 0.5
+        ..strokeCap = StrokeCap.round);
+    }
     final k = origin + knob;
-    canvas.drawCircle(k, r * 0.44, Paint()..color = const Color(0x55000000));
+    canvas.drawCircle(k + const Offset(0, 3), r * 0.44, Paint()..color = const Color(0x55000000));
     canvas.drawCircle(
         k,
-        r * 0.42,
+        r * 0.43,
         Paint()
           ..shader = RadialGradient(colors: [
             Colors.white.withValues(alpha: 0.95),
-            AppColors.lime.withValues(alpha: 0.85),
-          ]).createShader(Rect.fromCircle(center: k, radius: r * 0.42)));
+            AppColors.lime.withValues(alpha: 0.9),
+          ]).createShader(Rect.fromCircle(center: k, radius: r * 0.43)));
   }
 
   @override
   bool shouldRepaint(covariant _JoyPainter old) =>
-      old.origin != origin || old.knob != knob || old.active != active;
+      old.origin != origin || old.knob != knob || old.active != active || old.r != r;
 }
 
 /// POWER / SOFT / HIGH buttons plus the SPECIAL gauge button.
@@ -225,7 +249,25 @@ class SpecialButton extends StatefulWidget {
 
 class _SpecialButtonState extends State<SpecialButton> with SingleTickerProviderStateMixin {
   late final AnimationController _pulse =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 700))..repeat(reverse: true);
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 700));
+
+  void _syncPulse() {
+    final ready = widget.meter >= 1;
+    if (ready && !_pulse.isAnimating) _pulse.repeat(reverse: true);
+    if (!ready && _pulse.isAnimating) _pulse.stop();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _syncPulse();
+  }
+
+  @override
+  void didUpdateWidget(covariant SpecialButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncPulse();
+  }
 
   @override
   void dispose() {

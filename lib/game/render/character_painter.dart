@@ -9,7 +9,62 @@ import '../shot_planner.dart';
 /// Bobble-head pickleball player. The head always faces the camera so each
 /// player's own face photo is visible during the match.
 class CharacterPainter {
-  static const double visualScale = 1.35;
+  static const double visualScale = 1.5;
+
+  /// Faces pre-rendered once into small images (photo cropped to a circle,
+  /// ring and accessory included) so a frame draws each head with one image.
+  static final Map<int, ui.Image> _faces = {};
+  static const double _faceRes = 256; // image width (= 2.6 face radii), sharp on high-DPI phones
+
+  static void paintFaceCached(Canvas canvas, Offset c, double r, CharacterLook look, ui.Image? face) {
+    final key = Object.hash(identityHashCode(face), look.skin, look.hair, look.jersey, look.accessory);
+    var img = _faces[key];
+    if (img == null) {
+      if (_faces.length > 24) {
+        for (final i in _faces.values) {
+          i.dispose();
+        }
+        _faces.clear();
+      }
+      // box covers -1.3r..1.3r horizontally and -1.75r..1.25r vertically (crown/cap)
+      const rr = _faceRes / 2.6;
+      final rec = ui.PictureRecorder();
+      final cv = Canvas(rec);
+      paintFace(cv, const Offset(1.3 * rr, 1.75 * rr), rr, look, face: face);
+      final pic = rec.endRecording();
+      img = pic.toImageSync(_faceRes.toInt(), (3.0 * rr).ceil());
+      pic.dispose();
+      _faces[key] = img;
+    }
+    final scale = r / (_faceRes / 2.6);
+    final dst = Rect.fromLTWH(c.dx - 1.3 * (_faceRes / 2.6) * scale, c.dy - 1.75 * (_faceRes / 2.6) * scale,
+        img.width * scale, img.height * scale);
+    canvas.drawImageRect(img, Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()), dst,
+        Paint()..filterQuality = FilterQuality.medium);
+  }
+
+  /// Laid-out jersey numbers, reused across frames (text layout is slow).
+  static final Map<int, TextPainter> _numbers = {};
+
+  static TextPainter _number(int number, double size, bool darkText) {
+    final px = size.round().clamp(4, 80);
+    final key = (number * 100 + px) * 2 + (darkText ? 1 : 0);
+    return _numbers.putIfAbsent(key, () {
+      if (_numbers.length > 200) _numbers.clear();
+      return TextPainter(
+        text: TextSpan(
+          text: '$number',
+          style: TextStyle(
+            color: darkText ? const Color(0xFF111111) : Colors.white,
+            fontSize: px.toDouble(),
+            fontFamily: 'Roboto',
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+    });
+  }
 
   /// [pose]: 0 = playing, 1 = celebrating (victory), 2 = sad (defeat).
   /// [aura] glows around a player whose special attack is armed or ready.
@@ -150,19 +205,7 @@ class CharacterPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 0.02 * u
           ..color = const Color(0x33000000));
-    final numberSize = backView ? 0.3 * u : 0.15 * u;
-    final tp = TextPainter(
-      text: TextSpan(
-        text: '${look.number}',
-        style: TextStyle(
-          color: jersey.computeLuminance() > 0.55 ? const Color(0xFF111111) : Colors.white,
-          fontSize: numberSize,
-          fontFamily: 'Roboto',
-          fontWeight: FontWeight.w900,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
+    final tp = _number(look.number, backView ? 0.3 * u : 0.15 * u, jersey.computeLuminance() > 0.55);
     final numberPos = backView ? Offset(-tp.width / 2, -1.16 * u - tp.height / 2) : Offset(0.06 * u, -1.3 * u);
     tp.paint(canvas, numberPos);
 
@@ -179,7 +222,7 @@ class CharacterPainter {
     canvas.save();
     canvas.translate(0, -1.82 * u + (sad ? 0.08 * u : 0));
     canvas.rotate(wobble);
-    paintFace(canvas, Offset.zero, 0.36 * u, look, face: face, initials: initials);
+    paintFaceCached(canvas, Offset.zero, 0.36 * u, look, face);
     if (sad) {
       // a tear and a gloomy shade
       canvas.drawCircle(Offset.zero, 0.36 * u, Paint()..color = const Color(0x2A1A237E));

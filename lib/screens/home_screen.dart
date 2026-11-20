@@ -46,7 +46,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         localIndex: -1,
         showMarker: false,
         topInset: 30,
-        bottomInset: 10,
       );
     }
     _ticker = createTicker(_tick)..start();
@@ -56,7 +55,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   void _tick(Duration elapsed) {
     var dt = (elapsed - _last).inMicroseconds / 1e6;
     _last = elapsed;
-    if (dt <= 0 || dt > 0.1) dt = 1 / 60;
+    if (dt <= 0) dt = 1 / 60;
+    if (dt > 0.1) dt = 0.1;
     final demo = _demo;
     if (demo != null) {
       demo.update(dt);

@@ -40,6 +40,7 @@ class Effects {
   final List<List<double>> _trail = [];
   final List<_Confetti> _confetti = [];
   double shake = 0;
+  int maxParticles = 160; // lowered on low graphics quality
   double excitement = 0.15; // crowd energy 0..1
   double flash = 0; // white flash when a special fires
   Color flashColor = Colors.white;
@@ -131,6 +132,7 @@ class Effects {
       p.z = math.max(0, p.z + p.vz * dt);
     }
     _particles.removeWhere((p) => p.life <= 0);
+    if (_particles.length > maxParticles) _particles.removeRange(0, _particles.length - maxParticles);
     for (final r in _rings) {
       r.life -= dt;
     }

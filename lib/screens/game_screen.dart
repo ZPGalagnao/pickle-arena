@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -32,9 +31,81 @@ class _MatchReward {
   const _MatchReward(this.xp, this.levelBefore, this.levelAfter);
 }
 
+/// Everything the HUD shows. The HUD only rebuilds when this changes
+/// (a few times per second at most), never every frame.
+class _HudData {
+  final int s0, s1, servingTeam, serverNumber, rally;
+  final Phase phase;
+  final String? hint;
+  final int hintColor;
+  final String? ai;
+  final int bannerId;
+  final bool bannerVisible;
+  final int specialId;
+  final bool showResults;
+  final bool disconnected;
+  final int fps;
+
+  const _HudData({
+    this.s0 = 0,
+    this.s1 = 0,
+    this.servingTeam = 0,
+    this.serverNumber = 1,
+    this.rally = 0,
+    this.phase = Phase.serve,
+    this.hint,
+    this.hintColor = 0,
+    this.ai,
+    this.bannerId = 0,
+    this.bannerVisible = false,
+    this.specialId = 0,
+    this.showResults = false,
+    this.disconnected = false,
+    this.fps = 0,
+  });
+
+  @override
+  bool operator ==(Object o) =>
+      o is _HudData &&
+      o.s0 == s0 &&
+      o.s1 == s1 &&
+      o.servingTeam == servingTeam &&
+      o.serverNumber == serverNumber &&
+      o.rally == rally &&
+      o.phase == phase &&
+      o.hint == hint &&
+      o.hintColor == hintColor &&
+      o.ai == ai &&
+      o.bannerId == bannerId &&
+      o.bannerVisible == bannerVisible &&
+      o.specialId == specialId &&
+      o.showResults == showResults &&
+      o.disconnected == disconnected &&
+      o.fps == fps;
+
+  @override
+  int get hashCode => Object.hash(s0, s1, servingTeam, serverNumber, rally, phase, hint, hintColor, ai, bannerId,
+      bannerVisible, specialId, showResults, disconnected, fps);
+}
+
+class _CtrlData {
+  final bool serving, armed, hidden;
+  final int meter; // 0..20 (5% steps)
+  const _CtrlData(this.serving, this.armed, this.hidden, this.meter);
+
+  @override
+  bool operator ==(Object o) =>
+      o is _CtrlData && o.serving == serving && o.armed == armed && o.hidden == hidden && o.meter == meter;
+
+  @override
+  int get hashCode => Object.hash(serving, armed, hidden, meter);
+}
+
 class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateMixin {
   late final Ticker _ticker;
   final ValueNotifier<int> _frame = ValueNotifier(0);
+  final ValueNotifier<_HudData> _hud = ValueNotifier(const _HudData());
+  final ValueNotifier<_CtrlData> _ctrl = ValueNotifier(const _CtrlData(false, false, false, 0));
   final PlayerInput _input = PlayerInput();
   final Effects _fx = Effects();
   late final GameScene _scene;
@@ -46,6 +117,21 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
   bool _rewardPending = false;
   late List<int> _stepCount;
   double _crowdTimer = 0;
+  // banner / special tracking
+  String _lastBanner = '';
+  double _lastBannerTime = 0;
+  int _bannerId = 0;
+  double _lastSpecialTime = 99;
+  int _specialId = 0;
+  int _shownSpecialPlayer = -1;
+  String _bannerText = '';
+  bool _bannerGood = false;
+  // throttled extras
+  double _aiTimer = 0;
+  String? _aiText;
+  int _fpsFrames = 0;
+  double _fpsTime = 0;
+  int _fps = 0;
 
   GameSession get _s => widget.session;
   int get _me => _s.localIndex;
@@ -63,7 +149,10 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       fx: _fx,
       localIndex: _me,
       showMarker: settings.showMarker,
+      quality: settings.graphics,
+      screenShake: settings.screenShake,
     );
+    _fx.maxParticles = settings.graphics == 0 ? 50 : (settings.graphics == 1 ? 110 : 180);
     for (var i = 0; i < _s.profiles.length; i++) {
       FaceCache.get(_s.profiles[i].face).then((img) {
         if (mounted) _scene.faces[i] = img;
@@ -73,9 +162,15 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
     if (settings.control == ControlMode.tilt) _tilt = TiltController()..start();
     _s.addListener(_onSessionChanged);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    Sound.I.music('music_game', volume: 0.22);
-    Sound.I.crowd(0.3);
+    Sound.I.music('music_game');
+    Sound.I.crowd(0.6);
     _ticker = createTicker(_onTick)..start();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _scene.dpr = MediaQuery.devicePixelRatioOf(context).clamp(1.0, 3.0);
   }
 
   void _onSessionChanged() {
@@ -90,6 +185,8 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
     _tilt?.dispose();
     _s.removeListener(_onSessionChanged);
     _frame.dispose();
+    _hud.dispose();
+    _ctrl.dispose();
     Sound.I.crowd(0);
     Sound.I.music('music_menu');
     super.dispose();
@@ -98,18 +195,20 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
   void _onTick(Duration elapsed) {
     var dt = (elapsed - _last).inMicroseconds / 1e6;
     _last = elapsed;
-    if (dt <= 0 || dt > 0.1) dt = 1 / 60;
+    // never slow the game down when frames are late (that felt like slow motion)
+    if (dt <= 0) dt = 1 / 60;
+    if (dt > 0.1) dt = 0.1;
     if (_tilt != null) {
       _input.mx = _tilt!.mx;
       _input.my = _tilt!.my;
     }
     _input.aim = (_input.mx * 1.25).clamp(-1.25, 1.25);
     _input.depth = _input.my.clamp(-1.0, 1.0);
+    final st = _s.state;
     if (!_paused || _s.isMultiplayer) {
       _s.update(dt, _input);
       _input.clearEdge();
-      final st = _s.state;
-      _scene.state = st;
+      _scene.state = _s.state;
       for (final e in _s.takeEvents()) {
         _handleEvent(e);
       }
@@ -119,13 +218,82 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       _scene.victoryTime = over ? _scene.victoryTime + dt : 0;
       _footsteps(st);
       _crowdTimer += dt;
-      if (_crowdTimer > 0.3) {
+      if (_crowdTimer > 0.4) {
         _crowdTimer = 0;
-        Sound.I.crowd(0.2 + 0.3 * _fx.excitement);
+        Sound.I.crowd(0.45 + 0.55 * _fx.excitement);
       }
       if (over && _scene.victoryTime > 3.2 && _reward == null && !_rewardPending) _grantReward();
     }
+    _fpsFrames++;
+    _fpsTime += dt;
+    if (_fpsTime >= 0.5) {
+      _fps = (_fpsFrames / _fpsTime).round();
+      _fpsFrames = 0;
+      _fpsTime = 0;
+    }
+    _aiTimer += dt;
+    if (_aiTimer > 0.25) {
+      _aiTimer = 0;
+      _aiText = _s.aiThought;
+    }
+    _updateHud(st);
     _frame.value++;
+  }
+
+  void _updateHud(GameState st) {
+    final myTeam = st.players[_me].team;
+    final me = st.players[_me];
+    final incoming = st.phase == Phase.rally && st.lastHitter >= 0 && st.hittingTeam != myTeam;
+    String? hint;
+    var hintColor = AppColors.lime.toARGB32();
+    if (st.phase == Phase.serve && st.server == _me && st.phaseTime > 0.5) {
+      hint = 'YOUR SERVE  •  tap POWER, SOFT or HIGH  •  joystick left/right to aim';
+    } else if (me.frozen > 0) {
+      hint = 'FROZEN!';
+      hintColor = 0xFF7FE3FF;
+    } else if (incoming && st.mustBounce && st.bouncesOnReceiver == 0) {
+      hint = 'LET IT BOUNCE (two-bounce rule)';
+      hintColor = AppColors.blue.toARGB32();
+    } else if (incoming && st.bouncesOnReceiver == 0 && me.y.abs() < 2.134) {
+      hint = 'IN THE KITCHEN - no volleys!';
+      hintColor = AppColors.pink.toARGB32();
+    } else if (me.specialArmed) {
+      hint = '${_s.profiles[_me].special.label} ARMED - hit the ball!';
+      hintColor = _s.profiles[_me].special.color;
+    }
+    // a new banner appears when the text changes or its timer restarts
+    if (st.bannerTime > 0 && (st.banner != _lastBanner || st.bannerTime > _lastBannerTime + 0.05)) {
+      _bannerId++;
+      _bannerText = st.banner;
+      _bannerGood = st.phase == Phase.gameOver ? st.winner == myTeam : st.pointWinner == myTeam;
+    }
+    _lastBanner = st.banner;
+    _lastBannerTime = st.bannerTime;
+    if (st.specialPlayer >= 0 && st.specialTime < _lastSpecialTime && st.specialTime < 0.5) {
+      _specialId++;
+      _shownSpecialPlayer = st.specialPlayer;
+    }
+    _lastSpecialTime = st.specialTime;
+    final settings = AppScope.read(context).settings;
+    _hud.value = _HudData(
+      s0: st.score[0],
+      s1: st.score[1],
+      servingTeam: st.servingTeam,
+      serverNumber: st.serverNumber,
+      rally: st.phase == Phase.rally ? st.rally : 0,
+      phase: st.phase,
+      hint: st.phase == Phase.gameOver ? null : hint,
+      hintColor: hintColor,
+      ai: settings.showAiThoughts ? _aiText : null,
+      bannerId: _bannerId,
+      bannerVisible: st.bannerTime > 0 && st.phase != Phase.gameOver && st.specialTime >= 1.3,
+      specialId: _specialId,
+      showResults: st.phase == Phase.gameOver && _scene.victoryTime > 3.2,
+      disconnected: _s.disconnected,
+      fps: settings.showFps ? _fps : 0,
+    );
+    _ctrl.value = _CtrlData(st.phase == Phase.serve && st.server == _me, me.specialArmed,
+        st.phase == Phase.gameOver, (me.meter.clamp(0.0, 1.0) * 20).floor());
   }
 
   void _footsteps(GameState st) {
@@ -137,7 +305,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
         final speed = math.sqrt(p.vx * p.vx + p.vy * p.vy);
         if (speed > 2.2 && st.phase != Phase.gameOver) {
           final near = st.players[i].team == st.players[_me].team;
-          Sound.I.play(steps.isEven ? 'step1' : 'step2', volume: i == _me ? 0.55 : (near ? 0.25 : 0.12));
+          Sound.I.play(steps.isEven ? 'step1' : 'step2', volume: i == _me ? 0.5 : (near ? 0.22 : 0.1));
         }
       }
     }
@@ -157,25 +325,29 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
     }
     _fx.onEvent(e, st);
     final mine = e.player == _me;
+    final teammate = e.player >= 0 && e.player < st.players.length && st.players[e.player].team == myTeam;
     switch (e.type) {
       case 'hit':
         Sound.I.play(switch (ShotKind.values[e.kind]) {
           ShotKind.drive => 'hit_power',
           ShotKind.soft => 'hit_soft',
           ShotKind.lob => 'hit_high',
-        }, volume: mine ? 1 : 0.75);
-        if (mine) Sound.I.play('swing', volume: 0.5);
+        }, volume: mine ? 1.0 : (teammate ? 0.85 : 0.7));
+        Sound.I.play('swing', volume: mine ? 0.6 : 0.3);
         if (mine && haptics) HapticFeedback.lightImpact();
       case 'serve':
-        Sound.I.play('serve', volume: mine ? 1 : 0.7);
+        Sound.I.play('serve', volume: mine ? 1.0 : 0.75);
+        Sound.I.play('swing', volume: mine ? 0.5 : 0.25);
       case 'smash':
         Sound.I.play('hit_power');
-        Sound.I.play('crowd_cheer', volume: 0.5);
+        Sound.I.play('swing', volume: 0.7);
+        Sound.I.play('crowd_cheer', volume: 0.45);
         if (haptics) HapticFeedback.heavyImpact();
       case 'special':
         Sound.I.play('special_${['fire', 'ice', 'thunder', 'phantom', 'tornado'][e.kind]}');
-        Sound.I.play('slowmo', volume: 0.8);
-        Sound.I.play('crowd_cheer', volume: 0.7);
+        Sound.I.play('hit_power', volume: 0.9);
+        Sound.I.play('slowmo', volume: 0.7);
+        Sound.I.play('crowd_cheer', volume: 0.6);
         if (haptics) HapticFeedback.heavyImpact();
       case 'freeze':
         if (st.players[_me].frozen > 0 && haptics) HapticFeedback.mediumImpact();
@@ -185,22 +357,46 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
           if (haptics) HapticFeedback.selectionClick();
         }
       case 'bounce':
-        Sound.I.play('bounce', volume: 0.5);
+        Sound.I.play('bounce', volume: 0.55);
       case 'net':
         Sound.I.play('net');
       case 'point':
         final error = e.text.contains('OUT') || e.text.contains('NET') || e.text.contains('FAULT');
-        Sound.I.play(e.player == myTeam ? 'point_win' : 'point_lose', volume: 0.6);
-        Sound.I.play(error ? 'crowd_aww' : 'crowd_cheer', volume: error ? 0.55 : 0.75);
+        final ace = e.text.contains('ACE');
+        final big = ace || st.rally >= 8;
+        Sound.I.play(e.player == myTeam ? 'point_win' : 'point_lose', volume: 0.45);
+        if (big) {
+          Sound.I.play('crowd_big', volume: 0.75);
+        } else {
+          Sound.I.play(error ? 'crowd_aww' : 'crowd_cheer', volume: error ? 0.4 : 0.55);
+        }
+        if (ace) Sound.I.voice('vo_ace');
+        if (st.winner < 0) _callBigPoint(st);
         if (e.player == myTeam && haptics) HapticFeedback.mediumImpact();
       case 'game_over':
         final won = st.winner == myTeam;
-        Sound.I.play('slowmo', volume: 0.8);
-        Sound.I.play(won ? 'win_fanfare' : 'lose', volume: 0.9);
-        Sound.I.play('applause', volume: 0.8);
-        Sound.I.play('crowd_cheer', volume: 0.9);
+        Sound.I.play('slowmo', volume: 0.7);
+        Sound.I.play('crowd_big', volume: 0.8);
+        Sound.I.play('applause', volume: 0.7);
+        Sound.I.voice(won ? 'vo_victory' : 'vo_game_over', gap: 0);
+        Future.delayed(const Duration(milliseconds: 2600), () {
+          if (mounted && won && _s.state.phase == Phase.gameOver) Sound.I.voice('vo_congrats', gap: 0);
+        });
         app.recordResult(_s.modeKey, won);
         if (mounted) setState(() {});
+    }
+  }
+
+  /// Announcer calls "match point" / "game point" when a team can win on the next rally.
+  void _callBigPoint(GameState st) {
+    final target = _s.config.pointsToWin;
+    if (target > 30) return; // practice
+    for (final t in [0, 1]) {
+      final me = st.score[t], them = st.score[1 - t];
+      if (me >= target - 1 && me > them) {
+        Sound.I.voice(me >= target ? 'vo_game_point' : 'vo_match_point', volume: 0.85);
+        return;
+      }
     }
   }
 
@@ -237,6 +433,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
   Widget build(BuildContext context) {
     final settings = AppScope.of(context).settings;
     final left = settings.leftHanded;
+    final size = MediaQuery.sizeOf(context);
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
@@ -254,74 +451,87 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
             Positioned.fill(
               child: RepaintBoundary(child: CustomPaint(painter: GamePainter(_scene, repaint: _frame))),
             ),
-            if (_s.state.phase == Phase.gameOver)
-              const SizedBox.shrink() // controls hidden during the victory scene
-            else if (settings.control == ControlMode.joystick)
-              Positioned(
-                left: left ? null : 0,
-                right: left ? 0 : null,
-                bottom: 0,
-                width: MediaQuery.sizeOf(context).width * 0.3,
-                height: MediaQuery.sizeOf(context).height * 0.72,
-                child: FloatingJoystick(onChanged: (x, y) {
-                  _input.mx = x;
-                  _input.my = y;
-                }),
-              )
-            else
-              Positioned(
-                left: left ? null : 16,
-                right: left ? 16 : null,
-                bottom: 20,
-                child: _TiltBadge(onCalibrate: () => _tilt?.calibrate()),
-              ),
+            // ------------------------------------------------ controls
+            if (_s.state.phase != Phase.gameOver)
+              if (settings.control == ControlMode.joystick)
+                Positioned(
+                  left: left ? null : 0,
+                  right: left ? 0 : null,
+                  top: 56,
+                  bottom: 0,
+                  width: size.width * 0.42,
+                  child: RepaintBoundary(
+                    child: FloatingJoystick(
+                      radius: 62 * settings.joystickSize,
+                      fixed: settings.fixedJoystick,
+                      fullSpeedAt: 0.85 - 0.45 * settings.sensitivity,
+                      onChanged: (x, y) {
+                        _input.mx = x;
+                        _input.my = y;
+                      },
+                    ),
+                  ),
+                )
+              else
+                Positioned(
+                  left: left ? null : 16,
+                  right: left ? 16 : null,
+                  bottom: 20,
+                  child: _TiltBadge(onCalibrate: () => _tilt?.calibrate()),
+                ),
             Positioned(
-              right: left ? null : 6,
-              left: left ? 6 : null,
-              bottom: 4,
-              child: SafeArea(
-                top: false,
-                left: false,
-                child: ValueListenableBuilder<int>(
-                  valueListenable: _frame,
-                  builder: (context, _, _) {
-                    final st = _s.state;
-                    if (st.phase == Phase.gameOver) return const SizedBox.shrink();
-                    final me = st.players[_me];
+              right: left ? null : 4,
+              left: left ? 4 : null,
+              bottom: 2,
+              child: RepaintBoundary(
+                child: ValueListenableBuilder<_CtrlData>(
+                  valueListenable: _ctrl,
+                  builder: (context, c, _) {
+                    if (c.hidden) return const SizedBox.shrink();
                     final prof = _s.profiles[_me];
-                    return ShotButtons(
-                      onShot: _shot,
-                      onSpecial: _special,
-                      serving: st.phase == Phase.serve && st.server == _me,
-                      mirrored: left,
-                      meter: me.meter,
-                      specialArmed: me.specialArmed,
-                      specialColor: Color(prof.special.color),
-                      specialName: prof.special.label,
+                    return Transform.scale(
+                      scale: settings.buttonSize,
+                      alignment: left ? Alignment.bottomLeft : Alignment.bottomRight,
+                      child: ShotButtons(
+                        onShot: _shot,
+                        onSpecial: _special,
+                        serving: c.serving,
+                        mirrored: left,
+                        meter: c.meter / 20,
+                        specialArmed: c.armed,
+                        specialColor: Color(prof.special.color),
+                        specialName: prof.special.label,
+                      ),
                     );
                   },
                 ),
               ),
             ),
-            SafeArea(
-              child: ValueListenableBuilder<int>(
-                valueListenable: _frame,
-                builder: (context, _, _) => _Hud(
-                  session: _s,
-                  onPause: () => _s.canPause ? setState(() => _paused = true) : _confirmQuit(),
-                  showAi: settings.showAiThoughts,
+            // ------------------------------------------------ HUD
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: SafeArea(
+                  child: ValueListenableBuilder<_HudData>(
+                    valueListenable: _hud,
+                    builder: (context, h, _) => _Hud(
+                      session: _s,
+                      data: h,
+                      bannerText: _bannerText,
+                      bannerGood: _bannerGood,
+                      specialPlayer: _shownSpecialPlayer,
+                      onPause: () => _s.canPause ? setState(() => _paused = true) : _confirmQuit(),
+                    ),
+                  ),
                 ),
               ),
             ),
             if (_paused) Positioned.fill(child: _pauseOverlay()),
             Positioned.fill(
-              child: ValueListenableBuilder<int>(
-                valueListenable: _frame,
-                builder: (context, _, _) {
-                  if (_s.state.phase == Phase.gameOver) {
-                    return _scene.victoryTime > 3.2 ? _resultsOverlay() : const SizedBox.shrink();
-                  }
-                  if (_s.disconnected) return _disconnectedOverlay();
+              child: ValueListenableBuilder<_HudData>(
+                valueListenable: _hud,
+                builder: (context, h, _) {
+                  if (h.showResults) return _resultsOverlay();
+                  if (h.disconnected && h.phase != Phase.gameOver) return _disconnectedOverlay();
                   return const SizedBox.shrink();
                 },
               ),
@@ -348,16 +558,11 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
     if (ok == true) _quit();
   }
 
-  Widget _scrim(Widget child) => SizedBox.expand(
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
-          child: Container(
-            color: const Color(0xAA050B16),
-            alignment: Alignment.center,
-            padding: const EdgeInsets.all(16),
-            child: child,
-          ),
-        ),
+  Widget _scrim(Widget child) => Container(
+        color: const Color(0xD9050B16),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.all(16),
+        child: child,
       );
 
   Widget _pauseOverlay() {
@@ -425,7 +630,6 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // ------------------------------------------------ ranking
             Expanded(
               flex: 6,
               child: GlassCard(
@@ -459,19 +663,15 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                     Expanded(
                       child: ListView(
                         padding: EdgeInsets.zero,
-                        children: [
-                          for (var r = 0; r < order.length; r++) _rankRow(r, order[r], st),
-                        ],
+                        children: [for (var r = 0; r < order.length; r++) _rankRow(r, order[r], st)],
                       ),
                     ),
-                    Text('Longest rally: ${st.longestRally} shots',
-                        style: const TextStyle(color: AppColors.muted, fontSize: 12)),
+                    Text('Longest rally: ${st.longestRally} shots', style: const TextStyle(color: AppColors.muted, fontSize: 12)),
                   ],
                 ),
               ),
             ),
             const SizedBox(width: 12),
-            // ------------------------------------------------ XP + buttons
             Expanded(
               flex: 4,
               child: GlassCard(
@@ -508,8 +708,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                       if (reward.levelAfter > reward.levelBefore)
                         const Padding(
                           padding: EdgeInsets.only(top: 6),
-                          child: Text('LEVEL UP!',
-                              style: TextStyle(color: AppColors.lime, fontWeight: FontWeight.w900, fontSize: 18)),
+                          child: Text('LEVEL UP!', style: TextStyle(color: AppColors.lime, fontWeight: FontWeight.w900, fontSize: 18)),
                         ),
                     ] else
                       const SizedBox(height: 40, child: Center(child: CircularProgressIndicator(strokeWidth: 2))),
@@ -584,16 +783,13 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
               children: [
                 Row(
                   children: [
-                    Flexible(
-                        child: Text(p.name,
-                            overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900))),
+                    Flexible(child: Text(p.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900))),
                     if (rank == 0)
                       Container(
                         margin: const EdgeInsets.only(left: 6),
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                         decoration: BoxDecoration(color: medals[0], borderRadius: BorderRadius.circular(6)),
-                        child: const Text('MVP',
-                            style: TextStyle(color: AppColors.bg, fontWeight: FontWeight.w900, fontSize: 10)),
+                        child: const Text('MVP', style: TextStyle(color: AppColors.bg, fontWeight: FontWeight.w900, fontSize: 10)),
                       ),
                     Padding(
                       padding: const EdgeInsets.only(left: 6),
@@ -602,10 +798,8 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                     ),
                   ],
                 ),
-                Text(
-                  'Winners ${ms.winners}  •  Aces ${ms.aces}  •  Specials ${ms.specials}  •  Errors ${ms.errors}',
-                  style: const TextStyle(color: AppColors.muted, fontSize: 11),
-                ),
+                Text('Winners ${ms.winners}  •  Aces ${ms.aces}  •  Specials ${ms.specials}  •  Errors ${ms.errors}',
+                    style: const TextStyle(color: AppColors.muted, fontSize: 11)),
               ],
             ),
           ),
@@ -631,10 +825,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                 textAlign: TextAlign.center, style: TextStyle(color: AppColors.muted)),
             const SizedBox(height: 14),
             BigButton(
-                label: 'BACK TO HOME',
-                icon: Icons.home_rounded,
-                colors: const [AppColors.lime, Color(0xFF9CFF57)],
-                onTap: _quit),
+                label: 'BACK TO HOME', icon: Icons.home_rounded, colors: const [AppColors.lime, Color(0xFF9CFF57)], onTap: _quit),
           ],
         ),
       ),
@@ -666,35 +857,25 @@ class _TiltBadge extends StatelessWidget {
 
 class _Hud extends StatelessWidget {
   final GameSession session;
+  final _HudData data;
+  final String bannerText;
+  final bool bannerGood;
+  final int specialPlayer;
   final VoidCallback onPause;
-  final bool showAi;
-  const _Hud({required this.session, required this.onPause, required this.showAi});
+  const _Hud({
+    required this.session,
+    required this.data,
+    required this.bannerText,
+    required this.bannerGood,
+    required this.specialPlayer,
+    required this.onPause,
+  });
 
   @override
   Widget build(BuildContext context) {
     final st = session.state;
-    final me = session.localIndex;
-    final myTeam = st.players[me].team;
-    final incoming = st.phase == Phase.rally && st.lastHitter >= 0 && st.hittingTeam != myTeam;
-    final myP = st.players[me];
-    String? hint;
-    Color hintColor = AppColors.lime;
-    if (st.phase == Phase.serve && st.server == me && st.phaseTime > 0.5) {
-      hint = 'YOUR SERVE  •  tap POWER, SOFT or HIGH  •  joystick left/right to aim';
-    } else if (myP.frozen > 0) {
-      hint = 'FROZEN!';
-      hintColor = const Color(0xFF7FE3FF);
-    } else if (incoming && st.mustBounce && st.bouncesOnReceiver == 0) {
-      hint = 'LET IT BOUNCE (two-bounce rule)';
-      hintColor = AppColors.blue;
-    } else if (incoming && st.bouncesOnReceiver == 0 && myP.y.abs() < 2.134) {
-      hint = 'IN THE KITCHEN - no volleys!';
-      hintColor = AppColors.pink;
-    } else if (myP.specialArmed) {
-      hint = '${session.profiles[me].special.label} ARMED - hit the ball!';
-      hintColor = Color(session.profiles[me].special.color);
-    }
-    final specialShowing = st.specialPlayer >= 0 && st.specialTime < 1.3 && st.phase != Phase.gameOver;
+    final myTeam = st.players[session.localIndex].team;
+    final h = data;
     return Stack(
       children: [
         Padding(
@@ -702,44 +883,34 @@ class _Hud extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _TeamScore(session: session, team: myTeam, alignRight: false),
+              _TeamScore(session: session, team: myTeam, score: myTeam == 0 ? h.s0 : h.s1, data: h, alignRight: false),
               const Spacer(),
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
+              Container(
+                margin: const EdgeInsets.only(top: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(color: const Color(0xB3091427), borderRadius: BorderRadius.circular(12)),
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                      decoration: BoxDecoration(color: const Color(0xB3091427), borderRadius: BorderRadius.circular(12)),
-                      child: Column(
-                        children: [
-                          Text('${st.doubles ? 'DOUBLES' : 'SINGLES'}  •  to ${session.config.pointsToWin}',
-                              style: const TextStyle(color: AppColors.muted, fontSize: 11, fontWeight: FontWeight.w800)),
-                          if (st.rally > 1 && st.phase == Phase.rally)
-                            Text('RALLY ${st.rally}',
-                                style: const TextStyle(color: AppColors.lime, fontSize: 12, fontWeight: FontWeight.w900)),
-                        ],
-                      ),
-                    ),
-                    if (showAi && session.aiThought != null && session.aiThought!.isNotEmpty)
-                      Container(
-                        margin: const EdgeInsets.only(top: 2),
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(color: const Color(0x99000000), borderRadius: BorderRadius.circular(8)),
-                        child: Text('AI: ${session.aiThought}',
-                            style: const TextStyle(fontSize: 10, color: AppColors.mint, fontWeight: FontWeight.w700)),
-                      ),
+                    Text('${st.doubles ? 'DOUBLES' : 'SINGLES'}  •  to ${session.config.pointsToWin}',
+                        style: const TextStyle(color: AppColors.muted, fontSize: 11, fontWeight: FontWeight.w800)),
+                    if (h.rally > 1)
+                      Text('RALLY ${h.rally}',
+                          style: const TextStyle(color: AppColors.lime, fontSize: 12, fontWeight: FontWeight.w900)),
+                    if (h.ai != null && h.ai!.isNotEmpty)
+                      Text('AI: ${h.ai}', style: const TextStyle(fontSize: 10, color: AppColors.mint, fontWeight: FontWeight.w700)),
                   ],
                 ),
               ),
               const Spacer(),
-              _TeamScore(session: session, team: 1 - myTeam, alignRight: true),
+              _TeamScore(
+                  session: session, team: 1 - myTeam, score: myTeam == 0 ? h.s1 : h.s0, data: h, alignRight: true),
               const SizedBox(width: 6),
               PressScale(
                 onTap: onPause,
                 child: Container(
-                  width: 38,
-                  height: 38,
+                  width: 40,
+                  height: 40,
                   decoration: BoxDecoration(
                       color: const Color(0x99091427), shape: BoxShape.circle, border: Border.all(color: Colors.white24)),
                   child: Icon(session.canPause ? Icons.pause_rounded : Icons.close_rounded, size: 20),
@@ -748,25 +919,32 @@ class _Hud extends StatelessWidget {
             ],
           ),
         ),
-        if (specialShowing)
+        if (h.fps > 0)
+          Positioned(
+            left: 10,
+            bottom: 6,
+            child: Text('${h.fps} FPS',
+                style: TextStyle(
+                    color: h.fps >= 50 ? AppColors.mint : (h.fps >= 30 ? AppColors.lime : AppColors.orange),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 12)),
+          ),
+        if (specialPlayer >= 0 && h.specialId > 0 && h.phase != Phase.gameOver)
           Align(
             alignment: const Alignment(0, -0.35),
-            child: _SpecialBanner(
-              profile: session.profiles[st.specialPlayer],
-              t: st.specialTime,
-            ),
-          )
-        else if (st.bannerTime > 0 && st.banner.isNotEmpty && st.phase != Phase.gameOver)
+            child: _SpecialBanner(key: ValueKey('sp${h.specialId}'), profile: session.profiles[specialPlayer]),
+          ),
+        if (h.bannerVisible)
           Align(
             alignment: const Alignment(0, -0.25),
-            child: _Banner(text: st.banner, t: st.bannerTime, good: st.pointWinner == myTeam),
+            child: _Banner(key: ValueKey('b${h.bannerId}'), text: bannerText, good: bannerGood, hold: false),
           ),
-        if (st.phase == Phase.gameOver)
+        if (h.phase == Phase.gameOver && !h.showResults)
           Align(
             alignment: const Alignment(0, -0.6),
-            child: _Banner(text: st.banner, t: 1, good: st.winner == myTeam),
+            child: _Banner(key: const ValueKey('gameover'), text: st.banner, good: st.winner == myTeam, hold: true),
           ),
-        if (hint != null && st.phase != Phase.gameOver)
+        if (h.hint != null)
           Positioned(
             left: 0,
             right: 0,
@@ -775,12 +953,12 @@ class _Hud extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: hintColor.withValues(alpha: 0.18),
-                  border: Border.all(color: hintColor.withValues(alpha: 0.8)),
+                  color: Color(h.hintColor).withValues(alpha: 0.18),
+                  border: Border.all(color: Color(h.hintColor).withValues(alpha: 0.8)),
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: Text(hint,
-                    style: TextStyle(color: hintColor, fontWeight: FontWeight.w900, fontSize: 11.5, letterSpacing: 0.5)),
+                child: Text(h.hint!,
+                    style: TextStyle(color: Color(h.hintColor), fontWeight: FontWeight.w900, fontSize: 11.5, letterSpacing: 0.5)),
               ),
             ),
           ),
@@ -789,50 +967,66 @@ class _Hud extends StatelessWidget {
   }
 }
 
-class _SpecialBanner extends StatelessWidget {
+/// Pops in, holds, then fades out on its own (no per-frame rebuilds).
+class _SpecialBanner extends StatefulWidget {
   final PlayerProfile profile;
-  final double t;
-  const _SpecialBanner({required this.profile, required this.t});
+  const _SpecialBanner({super.key, required this.profile});
+
+  @override
+  State<_SpecialBanner> createState() => _SpecialBannerState();
+}
+
+class _SpecialBannerState extends State<_SpecialBanner> with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 1500))..forward();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final profile = widget.profile;
     final color = Color(profile.special.color);
-    final k = Curves.easeOutBack.transform((t / 0.25).clamp(0.0, 1.0));
-    final fade = (1 - ((t - 1.0) / 0.3).clamp(0.0, 1.0));
     return IgnorePointer(
-      child: Opacity(
-        opacity: fade,
-        child: Transform.scale(
-          scale: 0.5 + 0.5 * k,
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(8, 6, 18, 6),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(colors: [color.withValues(alpha: 0.9), color.withValues(alpha: 0.35)]),
-              borderRadius: BorderRadius.circular(40),
-              boxShadow: [BoxShadow(color: color.withValues(alpha: 0.7), blurRadius: 24)],
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                FaceAvatar(profile: profile, size: 46),
-                const SizedBox(width: 10),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(profile.name.toUpperCase(),
-                        style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12, color: Colors.white)),
-                    Text(profile.special.label,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w900,
-                            fontSize: 26,
-                            fontStyle: FontStyle.italic,
-                            color: Colors.white,
-                            shadows: [Shadow(color: Colors.black54, blurRadius: 6)])),
-                  ],
-                ),
-              ],
-            ),
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (context, child) {
+          final t = _c.value * 1.5;
+          final k = Curves.easeOutBack.transform((t / 0.25).clamp(0.0, 1.0));
+          final fade = 1 - ((t - 1.1) / 0.35).clamp(0.0, 1.0);
+          return Opacity(opacity: fade, child: Transform.scale(scale: 0.5 + 0.5 * k, child: child));
+        },
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(8, 6, 18, 6),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(colors: [color.withValues(alpha: 0.9), color.withValues(alpha: 0.35)]),
+            borderRadius: BorderRadius.circular(40),
+            boxShadow: [BoxShadow(color: color.withValues(alpha: 0.7), blurRadius: 24)],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FaceAvatar(profile: profile, size: 46),
+              const SizedBox(width: 10),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(profile.name.toUpperCase(),
+                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12, color: Colors.white)),
+                  Text(profile.special.label,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 26,
+                          fontStyle: FontStyle.italic,
+                          color: Colors.white,
+                          shadows: [Shadow(color: Colors.black54, blurRadius: 6)])),
+                ],
+              ),
+            ],
           ),
         ),
       ),
@@ -840,35 +1034,53 @@ class _SpecialBanner extends StatelessWidget {
   }
 }
 
-class _Banner extends StatelessWidget {
+class _Banner extends StatefulWidget {
   final String text;
-  final double t;
   final bool good;
-  const _Banner({required this.text, required this.t, required this.good});
+  final bool hold; // stay visible (game over)
+  const _Banner({super.key, required this.text, required this.good, required this.hold});
+
+  @override
+  State<_Banner> createState() => _BannerState();
+}
+
+class _BannerState extends State<_Banner> with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 1700))..forward();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final appear = (1 - math.max(0, t - 1.4) / 0.3).clamp(0.0, 1.0);
-    final fade = t.clamp(0.0, 0.35) / 0.35;
-    final scale = 0.6 + 0.4 * Curves.elasticOut.transform(appear);
+    final text = widget.text;
     final neutral = text.contains('-') && !text.contains('OUT') && !text.contains('FAULT') && !text.contains('NET');
-    final color = neutral ? Colors.white : (good ? AppColors.lime : AppColors.orange);
+    final color = neutral ? Colors.white : (widget.good ? AppColors.lime : AppColors.orange);
     return IgnorePointer(
-      child: Opacity(
-        opacity: fade,
-        child: Transform.scale(
-          scale: scale,
-          child: Text(
-            text,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 36,
-              fontWeight: FontWeight.w900,
-              fontStyle: FontStyle.italic,
-              letterSpacing: 2,
-              color: color,
-              shadows: const [Shadow(color: Colors.black, blurRadius: 12), Shadow(color: Colors.black54, blurRadius: 2)],
-            ),
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (context, child) {
+          final t = _c.value * 1.7;
+          final appear = (t / 0.3).clamp(0.0, 1.0);
+          final fade = widget.hold ? 1.0 : 1 - ((t - 1.35) / 0.35).clamp(0.0, 1.0);
+          return Opacity(
+            opacity: fade,
+            child: Transform.scale(scale: 0.6 + 0.4 * Curves.elasticOut.transform(appear), child: child),
+          );
+        },
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 36,
+            fontWeight: FontWeight.w900,
+            fontStyle: FontStyle.italic,
+            letterSpacing: 2,
+            color: color,
+            shadows: const [Shadow(color: Colors.black, blurRadius: 12), Shadow(color: Colors.black54, blurRadius: 2)],
           ),
         ),
       ),
@@ -880,14 +1092,17 @@ class _Banner extends StatelessWidget {
 class _TeamScore extends StatelessWidget {
   final GameSession session;
   final int team;
+  final int score;
+  final _HudData data;
   final bool alignRight;
-  const _TeamScore({required this.session, required this.team, required this.alignRight});
+  const _TeamScore(
+      {required this.session, required this.team, required this.score, required this.data, required this.alignRight});
 
   @override
   Widget build(BuildContext context) {
     final st = session.state;
     final members = st.teamPlayers(team);
-    final serving = st.servingTeam == team;
+    final serving = data.servingTeam == team;
     final first = session.profiles[members.first.index];
     final faces = SizedBox(
       width: 40.0 + (members.length - 1) * 24,
@@ -916,7 +1131,7 @@ class _TeamScore extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (serving && alignRight) _serveDot(st),
-            Text('${st.score[team]}',
+            Text('$score',
                 style: TextStyle(
                     fontSize: 26, height: 1.0, fontWeight: FontWeight.w900, color: serving ? AppColors.lime : Colors.white)),
             if (serving && !alignRight) _serveDot(st),
@@ -942,7 +1157,7 @@ class _TeamScore extends StatelessWidget {
         margin: const EdgeInsets.symmetric(horizontal: 5),
         padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
         decoration: BoxDecoration(color: AppColors.lime, borderRadius: BorderRadius.circular(8)),
-        child: Text(st.doubles && !session.config.rallyScoring ? 'SERVE ${st.serverNumber}' : 'SERVE',
+        child: Text(st.doubles && !session.config.rallyScoring ? 'SERVE ${data.serverNumber}' : 'SERVE',
             style: const TextStyle(color: AppColors.bg, fontSize: 9, fontWeight: FontWeight.w900)),
       );
 }
