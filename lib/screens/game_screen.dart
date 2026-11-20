@@ -247,7 +247,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
     String? hint;
     var hintColor = AppColors.lime.toARGB32();
     if (st.phase == Phase.serve && st.server == _me && st.phaseTime > 0.5) {
-      hint = 'YOUR SERVE  •  tap POWER, SOFT or HIGH  •  joystick left/right to aim';
+      hint = 'YOUR SERVE  •  POWER, SOFT or HIGH  •  aim with the joystick';
     } else if (me.frozen > 0) {
       hint = 'FROZEN!';
       hintColor = 0xFF7FE3FF;
@@ -883,24 +883,29 @@ class _Hud extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _TeamScore(session: session, team: myTeam, score: myTeam == 0 ? h.s0 : h.s1, data: h, alignRight: false),
-              const Spacer(),
-              Container(
-                margin: const EdgeInsets.only(top: 4),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                decoration: BoxDecoration(color: const Color(0xB3091427), borderRadius: BorderRadius.circular(12)),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('${st.doubles ? 'DOUBLES' : 'SINGLES'}  •  to ${session.config.pointsToWin}',
-                        style: const TextStyle(color: AppColors.muted, fontSize: 11, fontWeight: FontWeight.w800)),
-                    if (h.rally > 1)
-                      Text('RALLY ${h.rally}',
-                          style: const TextStyle(color: AppColors.lime, fontSize: 12, fontWeight: FontWeight.w900)),
-                    if (h.ai != null && h.ai!.isNotEmpty)
-                      Text('AI: ${h.ai}', style: const TextStyle(fontSize: 10, color: AppColors.mint, fontWeight: FontWeight.w700)),
-                  ],
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _TeamScore(session: session, team: myTeam, score: myTeam == 0 ? h.s0 : h.s1, data: h, alignRight: false),
+                  Container(
+                    margin: const EdgeInsets.only(top: 4, left: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                    decoration: BoxDecoration(color: const Color(0xB3091427), borderRadius: BorderRadius.circular(12)),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('${st.doubles ? 'DOUBLES' : 'SINGLES'}  •  to ${session.config.pointsToWin}',
+                            style: const TextStyle(color: AppColors.muted, fontSize: 11, fontWeight: FontWeight.w800)),
+                        if (h.rally > 1)
+                          Text('RALLY ${h.rally}',
+                              style: const TextStyle(color: AppColors.lime, fontSize: 12, fontWeight: FontWeight.w900)),
+                        if (h.ai != null && h.ai!.isNotEmpty)
+                          Text('AI: ${h.ai}', style: const TextStyle(fontSize: 10, color: AppColors.mint, fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                  ),
+                ],
               ),
               const Spacer(),
               _TeamScore(
@@ -948,7 +953,7 @@ class _Hud extends StatelessWidget {
           Positioned(
             left: 0,
             right: 0,
-            bottom: 10,
+            top: 8,
             child: Center(
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),

@@ -35,7 +35,10 @@ audio processed with NumPy + libsndfile
 - **Character customization** – your own face (selfie or gallery, auto-cropped with ML Kit face detection),
   jersey/shorts/shoe colors, paddle color and design, headwear, editable jersey number, skill points
   (Speed / Power / Control) and your special attack.
-- **Stadium atmosphere** – a crowd that jumps, waves and holds up signs; real crowd cheers, "aww"s and
+- **High camera** – the court is seen from above, behind your baseline: players never hide the ball, the
+  landing marker shows where the other side hit it, and the joystick and buttons sit beside the court
+  instead of on top of it.
+- **Stadium atmosphere** – a small crowd in tiered stands that jumps, waves and holds up signs; real crowd cheers, "aww"s and
   applause, a match announcer ("Ace!", "Match point!", "Victory!"), paddle hits, footsteps,
   special-attack sounds and licensed music (see [AUDIO_CREDITS.md](AUDIO_CREDITS.md)).
 - **Victory scene, ranking and XP** – the winners celebrate in slow motion while the losers hang their heads,

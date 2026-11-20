@@ -1,18 +1,24 @@
 import 'dart:math' as math;
 import 'dart:ui';
 
-/// Broadcast-style camera behind the local player's baseline (landscape).
-/// A low, distant camera keeps the court and the players big on screen.
+/// High camera behind the local player's baseline, looking down on the court
+/// (landscape). From up here the players never hide the ball and you can see
+/// where the other side is hitting; the court sits in the middle of the screen
+/// with the controls on either side.
 /// When [flip] is true the world is rotated 180 degrees so the local player
 /// (on the far half in world coordinates) still appears at the bottom.
 /// [zoom] / [focusX] / [focusY] push the camera in on a point; the painter
 /// applies it once as a canvas transform (see [applyZoom]).
 class CourtView {
-  static const double camY = -24.0;
-  static const double camZ = 7.8;
-  static const double pitch = 15 * math.pi / 180;
+  static const double camY = -13.0;
+  static const double camZ = 12.5;
+  static const double pitch = 45 * math.pi / 180;
   static final double _cos = math.cos(pitch);
   static final double _sin = math.sin(pitch);
+
+  /// Height of a standing character on screen, in metres at its feet
+  /// (characters are billboards, see CharacterPainter.visualScale).
+  static double characterHeight = 2.3;
 
   final bool flip;
   double _scale = 1, _ox = 0, _oy = 0;
@@ -38,11 +44,13 @@ class CourtView {
   void layout(Size size, {double top = 10, double bottom = 0, double side = 0}) {
     if (size == _size) return;
     _size = size;
-    // near players' feet ... far players' heads (characters are drawn
-    // bigger than life, so the far head goes up to ~3.4 m)
-    final pts = [
-      _raw(-3.3, -7.4, 0), _raw(3.3, -7.4, 0), _raw(-3.3, 7.6, 0), _raw(3.3, 7.6, 0), _raw(0, 7.1, 3.2),
+    // court corners plus a little run-off behind each baseline
+    final pts = <(double, double)>[
+      for (final (x, y) in [(-3.4, -7.7), (3.4, -7.7), (-3.4, 7.7), (3.4, 7.7)]) (_raw(x, y, 0).$1, _raw(x, y, 0).$2),
     ];
+    // the far player's head (billboard: its height does not foreshorten)
+    final (fx, fy, fd) = _raw(0, 7.4, 0);
+    pts.add((fx, fy - characterHeight / fd));
     var minX = double.infinity, maxX = -double.infinity;
     var minY = double.infinity, maxY = -double.infinity;
     for (final p in pts) {
@@ -81,6 +89,14 @@ class CourtView {
     final dy = y - camY, dz = z - camZ;
     final depth = dy * _cos - dz * _sin;
     return _scale / depth;
+  }
+
+  /// How flat a circle on the ground looks at a world point
+  /// (screen height / screen width; 1 = seen from straight above).
+  double squash(double x, double y) {
+    final vy = flip ? -y : y;
+    final a = projectView(0, vy - 0.25, 0).dy, b = projectView(0, vy + 0.25, 0).dy;
+    return ((a - b) / (0.5 * pxPerMeterView(0, vy, 0))).clamp(0.2, 1.0);
   }
 
   /// Larger = farther from the camera (for painter's-algorithm sorting).

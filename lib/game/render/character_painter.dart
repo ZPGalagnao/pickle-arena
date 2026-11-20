@@ -9,7 +9,7 @@ import '../shot_planner.dart';
 /// Bobble-head pickleball player. The head always faces the camera so each
 /// player's own face photo is visible during the match.
 class CharacterPainter {
-  static const double visualScale = 1.5;
+  static const double visualScale = 0.95; // keep CourtView.characterHeight = 2.42 * this
 
   /// Faces pre-rendered once into small images (photo cropped to a circle,
   /// ring and accessory included) so a frame draws each head with one image.
@@ -87,6 +87,7 @@ class CharacterPainter {
     Color? aura,
     double auraStrength = 1,
     bool frozen = false,
+    double squash = 0.32, // how flat ground circles look (camera angle)
   }) {
     final u = ppm * visualScale;
     final celebrate = pose == 1, sad = pose == 2;
@@ -108,14 +109,15 @@ class CharacterPainter {
               aura.withValues(alpha: 0),
             ]));
       canvas.drawOval(
-          Rect.fromCenter(center: feet, width: 1.3 * u, height: 0.42 * u),
+          Rect.fromCenter(center: feet, width: 1.3 * u, height: 1.3 * u * squash),
           Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = 0.06 * u
             ..color = aura.withValues(alpha: 0.9 * auraStrength));
     }
     if (shadow) {
-      canvas.drawOval(Rect.fromCenter(center: feet, width: (0.95 - hop / u * 0.6) * u, height: 0.3 * u),
+      final sw = (0.95 - hop / u * 0.6) * u;
+      canvas.drawOval(Rect.fromCenter(center: feet, width: sw, height: sw * squash),
           Paint()..color = const Color(0x55000000));
     }
     canvas.save();

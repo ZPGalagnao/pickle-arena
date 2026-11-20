@@ -364,7 +364,7 @@ class _Gameplay extends StatelessWidget {
             s.showAiThoughts, (v) => _save(context, (s) => s.showAiThoughts = v)),
         const SizedBox(height: 16),
         const Center(
-          child: Text('Pickle Arena v1.2  •  Intelligent Systems Project',
+          child: Text('Pickle Arena v1.3  •  Intelligent Systems Project',
               style: TextStyle(color: AppColors.muted, fontSize: 12)),
         ),
       ],

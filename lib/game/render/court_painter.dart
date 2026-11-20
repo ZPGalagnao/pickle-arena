@@ -27,6 +27,13 @@ class CourtPainter {
 
   static List<_Fan>? _fans;
 
+  // tiered side stands: row k spans x = _standX + k*_rowW .. +_rowW at height (k+1)*_rowH
+  static const double _standX = 8.3, _rowW = 0.85, _rowH = 0.42;
+  static const int _rows = 7;
+  static const double _standY0 = -12, _standY1 = 12;
+  static const double _backY = 12.4; // back stand starts here (rows run away from the court)
+
+  /// A small crowd sitting on random seats (most seats stay empty).
   static List<_Fan> _crowd() {
     if (_fans != null) return _fans!;
     final r = math.Random(11);
@@ -36,26 +43,28 @@ class CourtPainter {
     ];
     const skins = [0xFFFFE0BD, 0xFFF1C27D, 0xFFE0AC69, 0xFFC68642, 0xFF8D5524];
     final fans = <_Fan>[];
-    // background fans are toned down toward the stand color so the court pops
     int dim(int c, double k) => Color.lerp(Color(c), const Color(0xFF0E2140), k)!.toARGB32();
-    _Fan make(double x, double y, double z) => _Fan(x, y, z, dim(shirts[r.nextInt(shirts.length)], 0.35),
-        dim(skins[r.nextInt(skins.length)], 0.25), r.nextDouble() * math.pi * 2, r.nextDouble(),
-        r.nextDouble() < 0.1 ? 1 + r.nextInt(4) : 0);
-    // stand behind the far baseline
-    for (var row = 0; row < 5; row++) {
-      for (var x = -13.0; x <= 13.0; x += 1.0 + r.nextDouble() * 0.25) {
-        fans.add(make(x + r.nextDouble() * 0.3, 13.0 + row * 0.95, 0.7 + row * 0.75));
-      }
-    }
-    // side stands (only the far parts are on screen with the broadcast camera)
-    for (final s in [-1.0, 1.0]) {
-      for (var row = 0; row < 4; row++) {
-        for (var y = -4.0; y <= 11.0; y += 1.15 + r.nextDouble() * 0.3) {
-          fans.add(make(s * (8.8 + row * 0.95), y + r.nextDouble() * 0.3, 0.7 + row * 0.75));
+    _Fan make(double x, double y, double z) => _Fan(x, y, z, dim(shirts[r.nextInt(shirts.length)], 0.2),
+        dim(skins[r.nextInt(skins.length)], 0.1), r.nextDouble() * math.pi * 2, r.nextDouble(),
+        r.nextDouble() < 0.14 ? 1 + r.nextInt(4) : 0);
+    for (final side in [-1.0, 1.0]) {
+      for (var k = 0; k < _rows; k++) {
+        for (var y = _standY0 + 0.5; y < _standY1; y += 0.62) {
+          // fuller near the middle of the court, emptier at the ends
+          final p = 0.3 * (1 - (y.abs() / 12).clamp(0.0, 1.0)) + 0.04;
+          if (r.nextDouble() < p) fans.add(make(side * (_standX + (k + 0.55) * _rowW), y, (k + 1) * _rowH));
         }
       }
     }
-    fans.sort((a, b) => (b.y + b.x.abs() * 0.01).compareTo(a.y + a.x.abs() * 0.01));
+    for (var k = 0; k < 4; k++) {
+      for (var x = -7.0; x <= 7.0; x += 0.62) {
+        if (r.nextDouble() < 0.18) fans.add(make(x, _backY + (k + 0.55) * _rowW, (k + 1) * _rowH));
+      }
+    }
+    // farthest from the (high) camera first
+    double depth(_Fan f) =>
+        (f.y - CourtView.camY) * math.cos(CourtView.pitch) - (f.z - CourtView.camZ) * math.sin(CourtView.pitch);
+    fans.sort((a, b) => depth(b).compareTo(depth(a)));
     return _fans = fans;
   }
 
@@ -81,37 +90,67 @@ class CourtPainter {
     return path..close();
   }
 
-  /// Sky, lights, stands, apron, court and lines (cached by the painter).
+  /// Floor, stands, boards, apron, court and lines (cached by the painter).
   static void paintStatic(Canvas canvas, Size size, CourtView v) {
-    // paint a margin around the screen so screen-shake never shows an edge
+    // arena floor (with a margin so screen-shake never shows an edge)
     canvas.drawRect(
       const Offset(-40, -40) & Size(size.width + 80, size.height + 80),
       Paint()
         ..shader = ui.Gradient.linear(Offset.zero, Offset(0, size.height),
-            const [Color(0xFF060D1C), Color(0xFF0E2140), Color(0xFF0B1A33)], const [0, 0.45, 1]),
+            const [Color(0xFF0A1730), Color(0xFF112646), Color(0xFF0D1F3B)], const [0, 0.5, 1]),
     );
-    for (final fx in [0.06, 0.3, 0.7, 0.94]) {
-      final c = Offset(size.width * fx, 4);
-      canvas.drawCircle(
-          c, 80, Paint()..shader = ui.Gradient.radial(c, 80, const [Color(0x66FFF6D5), Color(0x00FFF6D5)]));
-      canvas.drawCircle(c, 4, Paint()..color = const Color(0xFFFFFBE6));
-    }
-    final standPaint = Paint()..color = const Color(0xFF14284A);
-    canvas.drawPath(_viewPoly(v, [[-16, 12.5, 0], [16, 12.5, 0], [16, 18.5, 4.6], [-16, 18.5, 4.6]]), standPaint);
-    for (final s in [-1.0, 1.0]) {
+    canvas.drawPath(_viewPoly(v, [[-30, -16, 0], [30, -16, 0], [30, 16, 0], [-30, 16, 0]]),
+        Paint()..color = const Color(0xFF15304F));
+
+    // side stands, outermost row first
+    for (final sd in [-1.0, 1.0]) {
+      for (var k = _rows - 1; k >= 0; k--) {
+        final x0 = sd * (_standX + k * _rowW), x1 = sd * (_standX + (k + 1) * _rowW);
+        final z0 = k * _rowH, z1 = (k + 1) * _rowH;
+        // riser (faces the court) then tread
+        canvas.drawPath(_viewPoly(v, [[x0, _standY0, z0], [x0, _standY1, z0], [x0, _standY1, z1], [x0, _standY0, z1]]),
+            Paint()..color = const Color(0xFF0C1C36));
+        canvas.drawPath(_viewPoly(v, [[x0, _standY0, z1], [x0, _standY1, z1], [x1, _standY1, z1], [x1, _standY0, z1]]),
+            Paint()..color = k.isEven ? const Color(0xFF1B3A63) : const Color(0xFF183457));
+        // seats
+        final seat = Paint()..color = k.isEven ? const Color(0xFF2A5185) : const Color(0xFF26497A);
+        for (var y = _standY0 + 0.5; y < _standY1; y += 0.62) {
+          final xs = x0 + sd * 0.12, xe = x0 + sd * 0.5;
+          canvas.drawPath(_viewPoly(v, [[xs, y, z1 + 0.01], [xs, y + 0.42, z1 + 0.01], [xe, y + 0.42, z1 + 0.01], [xe, y, z1 + 0.01]]),
+              seat);
+        }
+      }
+      // stand end walls / top rail
+      final xo = sd * (_standX + _rows * _rowW);
       canvas.drawPath(
-          _viewPoly(v, [[s * 8.4, -9, 0], [s * 8.4, 12.5, 0], [s * 13.2, 12.5, 3.6], [s * 13.2, -9, 3.6]]),
-          standPaint);
+          _viewPoly(v, [[xo, _standY0, _rows * _rowH], [xo, _standY1, _rows * _rowH], [xo + sd * 6, _standY1, _rows * _rowH + 1.5], [xo + sd * 6, _standY0, _rows * _rowH + 1.5]]),
+          Paint()..color = const Color(0xFF0B1A31));
     }
-    final board = Paint()..color = const Color(0xFF0F3B2B);
-    canvas.drawPath(_viewPoly(v, [[-12, 11.0, 0], [12, 11.0, 0], [12, 11.0, 0.9], [-12, 11.0, 0.9]]), board);
-    for (final s in [-1.0, 1.0]) {
-      canvas.drawPath(
-          _viewPoly(v, [[s * 7.4, -9, 0], [s * 7.4, 11.0, 0], [s * 7.4, 11.0, 0.8], [s * 7.4, -9, 0.8]]), board);
+    // back stand (mostly above the top of the screen)
+    for (var k = 3; k >= 0; k--) {
+      final y0 = _backY + k * _rowW, y1 = y0 + _rowW, z0 = k * _rowH, z1 = (k + 1) * _rowH;
+      canvas.drawPath(_viewPoly(v, [[-14, y0, z0], [14, y0, z0], [14, y0, z1], [-14, y0, z1]]),
+          Paint()..color = const Color(0xFF0C1C36));
+      canvas.drawPath(_viewPoly(v, [[-14, y0, z1], [14, y0, z1], [14, y1, z1], [-14, y1, z1]]),
+          Paint()..color = k.isEven ? const Color(0xFF1B3A63) : const Color(0xFF183457));
     }
-    // board stripes (lime ad panels)
-    final stripe = Paint()..color = const Color(0x55D4F33A);
-    for (var x = -11.0; x < 11.0; x += 4.0) {
+
+    // low boards around the court with lime ad stripes
+    final boardFace = Paint()..color = const Color(0xFF0F3B2B);
+    final boardTop = Paint()..color = const Color(0xFF1C5A40);
+    final stripe = Paint()..color = const Color(0x77D4F33A);
+    for (final sd in [-1.0, 1.0]) {
+      final x = sd * 7.4;
+      canvas.drawPath(_viewPoly(v, [[x, -11, 0], [x, 11, 0], [x, 11, 0.8], [x, -11, 0.8]]), boardFace);
+      canvas.drawPath(_viewPoly(v, [[x, -11, 0.8], [x, 11, 0.8], [x + sd * 0.25, 11, 0.8], [x + sd * 0.25, -11, 0.8]]),
+          boardTop);
+      for (var y = -10.0; y < 10.0; y += 4.0) {
+        canvas.drawPath(_viewPoly(v, [[x - sd * 0.01, y, 0.3], [x - sd * 0.01, y + 2.4, 0.3], [x - sd * 0.01, y + 2.4, 0.55], [x - sd * 0.01, y, 0.55]]),
+            stripe);
+      }
+    }
+    canvas.drawPath(_viewPoly(v, [[-7.4, 11, 0], [7.4, 11, 0], [7.4, 11, 0.8], [-7.4, 11, 0.8]]), boardFace);
+    for (var x = -6.6; x < 6.6; x += 4.0) {
       canvas.drawPath(_viewPoly(v, [[x, 10.99, 0.3], [x + 2.4, 10.99, 0.3], [x + 2.4, 10.99, 0.55], [x, 10.99, 0.55]]),
           stripe);
     }
@@ -166,7 +205,7 @@ class CourtPainter {
       final jump = cheering ? (math.sin(time * 9 + f.phase).abs() * 0.28 * excitement) : 0.0;
       final base = v.projectView(f.x + math.sin(time * 1.6 + f.phase) * 0.05, f.y, f.z + jump);
       if (base.dx < -30 || base.dx > w + 30 || base.dy < -30) continue;
-      final u = v.pxPerMeterView(f.x, f.y, f.z) * 0.8;
+      final u = v.pxPerMeterView(f.x, f.y, f.z) * 0.75;
       final bx = base.dx, by = base.dy;
       // body
       rect(bx - 0.25 * u, by - 0.75 * u, bx + 0.25 * u, by - 0.15 * u, f.shirt);

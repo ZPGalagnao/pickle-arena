@@ -192,7 +192,7 @@ class Effects {
       final ppm = v.pxPerMeter(r.x, r.y, 0);
       final rad = (0.12 + r.radius * t) * ppm;
       canvas.drawOval(
-          Rect.fromCenter(center: c, width: rad * 2, height: rad * 1.2),
+          Rect.fromCenter(center: c, width: rad * 2, height: rad * 2 * v.squash(r.x, r.y)),
           Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = 2.5 * (1 - t) + 0.5

@@ -35,7 +35,7 @@ class GameScene {
     required this.fx,
     this.localIndex = 0,
     this.showMarker = true,
-    this.topInset = 24,
+    this.topInset = 40,
     this.dpr = 2,
     this.quality = 2,
     this.screenShake = true,
@@ -117,25 +117,24 @@ class GamePainter extends CustomPainter {
     final shadowC = v.project(b.x, b.y, 0);
     final sppm = v.pxPerMeter(b.x, b.y, 0);
     final sr = ballRadius * sppm * (1.1 + math.min(b.z, 3) * 0.12);
-    canvas.drawOval(Rect.fromCenter(center: shadowC, width: sr * 2.2, height: sr * 1.2),
+    canvas.drawOval(Rect.fromCenter(center: shadowC, width: sr * 2.2, height: sr * 2.2 * v.squash(b.x, b.y)),
         Paint()..color = Color.fromRGBO(0, 0, 0, (0.45 - b.z * 0.08).clamp(0.12, 0.45) * ghost));
 
     // painter's algorithm: farthest first; the net sits at depth 0
-    const ballId = -1, netId = -2;
+    const netId = -2;
     final items = <(double, int)>[
       for (var i = 0; i < s.players.length; i++) (v.depthKey(s.players[i].y), i),
-      (v.depthKey(b.y) - 0.01, ballId),
       (0.0, netId),
     ]..sort((a, c) => c.$1.compareTo(a.$1));
     for (final (_, id) in items) {
       if (id == netId) {
         _drawLayer(canvas, _net!, _netRect);
-      } else if (id == ballId) {
-        _paintBall(canvas, v, ghost);
       } else {
         _paintPlayer(canvas, v, id);
       }
     }
+    // the ball is always drawn on top: no player or net can ever hide it
+    _paintBall(canvas, v, ghost);
     // name tags + meters on top of everything (never hidden by the net or another player)
     if (!(s.phase == Phase.gameOver && s.winner >= 0)) {
       for (var i = 0; i < s.players.length; i++) {
@@ -196,16 +195,17 @@ class GamePainter extends CustomPainter {
     if (scene.showMarker && incoming && s.hasMarker) {
       final c = v.project(s.markerX, s.markerY, 0);
       final ppm = v.pxPerMeter(s.markerX, s.markerY, 0);
-      final r = (0.28 + 0.05 * math.sin(scene.time * 8)) * ppm;
+      final r = (0.32 + 0.05 * math.sin(scene.time * 8)) * ppm;
+      final sq = v.squash(s.markerX, s.markerY);
       final inside = Court.inCourt(s.markerX, s.markerY, me.side);
       final col = inside ? const Color(0xFFD4F33A) : const Color(0xFFFF5252);
-      canvas.drawOval(Rect.fromCenter(center: c, width: r * 2, height: r * 0.9),
+      canvas.drawOval(Rect.fromCenter(center: c, width: r * 2, height: r * 2 * sq),
           Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = 2.5
-            ..color = col.withValues(alpha: 0.85));
-      canvas.drawOval(Rect.fromCenter(center: c, width: r * 0.6, height: r * 0.27),
-          Paint()..color = col.withValues(alpha: 0.5));
+            ..color = col.withValues(alpha: 0.9));
+      canvas.drawOval(Rect.fromCenter(center: c, width: r * 0.7, height: r * 0.7 * sq),
+          Paint()..color = col.withValues(alpha: 0.55));
     }
     final feet = v.project(me.x, me.y, 0);
     final ppm = v.pxPerMeter(me.x, me.y, 0);
@@ -213,7 +213,7 @@ class GamePainter extends CustomPainter {
     final dist = math.sqrt((b.x - me.x) * (b.x - me.x) + (b.y - me.y) * (b.y - me.y));
     final hot = incoming && dist < 1.05 && b.z < 2.35;
     canvas.drawOval(
-        Rect.fromCenter(center: feet, width: 2.1 * ppm, height: 0.8 * ppm),
+        Rect.fromCenter(center: feet, width: 1.9 * ppm, height: 1.9 * ppm * v.squash(me.x, me.y)),
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = hot ? 4 : 2.2
@@ -269,6 +269,7 @@ class GamePainter extends CustomPainter {
       aura: pose == 0 && (p.specialArmed || p.meter >= 1) ? skillColor : null,
       auraStrength: p.specialArmed ? 1.0 : 0.45,
       frozen: p.frozen > 0 && pose == 0,
+      squash: v.squash(p.x, p.y),
     );
   }
 
@@ -277,11 +278,16 @@ class GamePainter extends CustomPainter {
     final prof = scene.profiles[i];
     final feet = v.project(p.x, p.y, 0);
     final ppm = v.pxPerMeter(p.x, p.y, 0);
-    final backView = v.depthKey(p.y) < 0;
     final skillColor = Color(prof.special.color);
     final tp = _tag(prof.name, math.max(9.0, ppm * 0.26), i == scene.localIndex);
-    // far-side players get their tag under their feet so it never runs into the top HUD
-    final tagY = backView ? feet.dy - ppm * CharacterPainter.visualScale * 2.42 - tp.height - 6 : feet.dy + 3;
+    // tags sit under the feet (below the shadow / your ring), so they never cover the ball,
+    // a head, the net or the HUD, and near and far tags can't run into each other
+    final sq = v.squash(p.x, p.y);
+    var tagY = feet.dy + (i == scene.localIndex ? 0.95 : 0.5) * ppm * sq + 1;
+    if (tagY + tp.height + 8 > v.size.height) {
+      // deep behind the near baseline: no room below, so put it over the head
+      tagY = feet.dy - ppm * CharacterPainter.visualScale * 2.42 - tp.height - 6;
+    }
     tp.paint(canvas, Offset(feet.dx - tp.width / 2, tagY));
     final w = math.max(26.0, ppm * 0.9), h = math.max(3.0, ppm * 0.07);
     final bar = Rect.fromLTWH(feet.dx - w / 2, tagY + tp.height + 1, w, h);
